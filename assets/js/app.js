@@ -1,107 +1,186 @@
-const $ = (q)=>document.querySelector(q);
-const $$ = (q)=>document.querySelectorAll(q);
-const API = (path)=>`api/${path}`;
+// assets/js/app.js
+// Simple cashier UI logic (initApp will run automatically after script load)
+// Assumes server-side session auth is active (we called /api/login.php earlier)
 
-let PIN = '';
-let products = [];
-let cart = {}; // {product_id: {id,name,price,qty}}
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
 
-function rupiah(n){return 'Rp' + (n||0).toLocaleString('id-ID');}
+let CART = [];
 
-async function fetchJson(url, opts={}){
-  if(!PIN){PIN = $('#pin').value.trim();}
-  opts.headers = Object.assign({'X-APP-PIN': PIN}, opts.headers||{});
-  const res = await fetch(url, opts);
-  const data = await res.json().catch(()=>({ok:false,error:'Invalid JSON'}));
-  if(!res.ok || !data.ok){ throw new Error(data.error || res.statusText); }
-  return data.data;
+function formatRp(v) {
+  return 'Rp' + (Number(v || 0)).toLocaleString('id-ID');
 }
 
-async function loadProducts(q=''){
-  try{
-    products = await fetchJson(API(`products.php?q=${encodeURIComponent(q)}`));
-    renderProducts();
-  }catch(e){ alert('Gagal ambil data produk: '+e.message); }
+async function loadProducts(q = '') {
+  try {
+    const url = '/api/products.php?q=' + encodeURIComponent(q);
+    const r = await fetch(url, { credentials: 'same-origin' });
+    const j = await r.json();
+    if (!j.ok) {
+      alert('Gagal ambil data produk: ' + (j.error || ''));
+      return [];
+    }
+    return j.data || [];
+  } catch (e) {
+    console.error(e);
+    alert('Gagal koneksi ke server');
+    return [];
+  }
 }
 
-function renderProducts(){
-  const wrap = $('#product-list'); wrap.innerHTML = '';
-  products.forEach(p=>{
+function renderProducts(list) {
+  const el = $('#product-list');
+  el.innerHTML = '';
+  if (!list.length) {
+    el.innerHTML = '<div class="col-12"><p class="text-muted">Tidak ada produk</p></div>';
+    return;
+  }
+  list.forEach(p => {
     const col = document.createElement('div');
-    col.className='col-6 col-md-4';
-    col.innerHTML = `<div class="card h-100 shadow-sm">
-      <div class="card-body p-2">
-        <h6 class="card-title mb-1">${p.name}</h6>
-        <div class="text-muted small">SKU: ${p.sku||'-'}</div>
-        <div class="price mt-1">${rupiah(p.price)}</div>
-        <button class="btn btn-primary btn-sm mt-2 w-100">Tambah</button>
+    col.className = 'col-6 col-md-4';
+    col.innerHTML = `
+      <div class="card">
+        <div class="card-body">
+          <h6 class="card-title mb-1">${escapeHtml(p.name || p.sku || 'Produk')}</h6>
+          <p class="card-text small text-muted mb-1">SKU: ${escapeHtml(p.sku || '')}</p>
+          <p class="card-text fw-bold">${formatRp(p.price)}</p>
+          <div class="d-flex justify-content-between">
+            <button class="btn btn-sm btn-primary btn-add" data-sku="${escapeHtml(p.sku)}">Tambah</button>
+            <small class="text-muted">Stok: ${p.stock ?? '-'}</small>
+          </div>
+        </div>
       </div>
-    </div>`;
-    col.querySelector('button').onclick=()=>addToCart(p);
-    wrap.appendChild(col);
+    `;
+    el.appendChild(col);
   });
+
+  $$('.btn-add').forEach(btn => btn.addEventListener('click', e => {
+    const sku = e.currentTarget.dataset.sku;
+    const prod = list.find(x => x.sku === sku);
+    if (prod) addToCart(prod);
+  }));
 }
 
-function addToCart(p){
-  if(!cart[p.id]) cart[p.id] = {id:p.id, name:p.name, price:p.price, qty:0};
-  cart[p.id].qty++;
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+}
+
+function addToCart(prod) {
+  const existing = CART.find(x => x.sku === prod.sku);
+  if (existing) existing.qty++;
+  else CART.push({ sku: prod.sku, name: prod.name, price: Number(prod.price), qty: 1 });
   renderCart();
 }
 
-function renderCart(){
-  const wrap = $('#cart-list'); wrap.innerHTML='';
+function renderCart() {
+  const el = $('#cart-list');
+  el.innerHTML = '';
   let total = 0;
-  Object.values(cart).forEach(it=>{
-    total += it.qty * it.price;
+  if (!CART.length) el.innerHTML = '<p class="text-muted">Keranjang kosong</p>';
+  CART.forEach(item => {
     const row = document.createElement('div');
-    row.className='item shadow-sm';
+    row.className = 'd-flex justify-content-between align-items-center py-1';
     row.innerHTML = `
       <div>
-        <div><strong>${it.name}</strong></div>
-        <div class="small text-muted">${rupiah(it.price)}</div>
+        <div class="fw-bold">${escapeHtml(item.name)}</div>
+        <div class="small text-muted">${escapeHtml(item.sku)}</div>
       </div>
-      <div class="d-flex align-items-center gap-2">
-        <button class="btn btn-outline-secondary btn-qty">-</button>
-        <span>${it.qty}</span>
-        <button class="btn btn-outline-secondary btn-qty">+</button>
-        <button class="btn btn-outline-danger btn-sm">x</button>
-      </div>`;
-    const [btnMinus, , btnPlus, btnDel] = row.querySelectorAll('button');
-    btnMinus.onclick=()=>{ it.qty=Math.max(0,it.qty-1); if(it.qty==0) delete cart[it.id]; renderCart(); };
-    btnPlus.onclick=()=>{ it.qty++; renderCart(); };
-    btnDel.onclick=()=>{ delete cart[it.id]; renderCart(); };
-    wrap.appendChild(row);
+      <div class="text-end">
+        <div>${formatRp(item.price)} x ${item.qty}</div>
+        <div class="mt-1">
+          <button class="btn btn-sm btn-outline-secondary btn-decr">-</button>
+          <button class="btn btn-sm btn-outline-secondary btn-incr">+</button>
+        </div>
+      </div>
+    `;
+    el.appendChild(row);
+
+    row.querySelector('.btn-decr').addEventListener('click', () => {
+      item.qty = Math.max(0, item.qty - 1);
+      if (item.qty === 0) CART = CART.filter(c => c.sku !== item.sku);
+      renderCart();
+    });
+    row.querySelector('.btn-incr').addEventListener('click', () => {
+      item.qty++;
+      renderCart();
+    });
+
+    total += item.price * item.qty;
   });
-  $('#total').textContent = rupiah(total);
-  $('#modal-total').textContent = rupiah(total);
+  $('#total').textContent = formatRp(total);
+  $('#modal-total').textContent = formatRp(total);
 }
 
-$('#search').addEventListener('input', e=>{
-  const q = e.target.value.trim();
-  loadProducts(q);
-});
-
-$('#btn-checkout').addEventListener('click', ()=>{
-  const total = Object.values(cart).reduce((s,it)=>s+it.qty*it.price,0);
-  if(total<=0) return alert('Keranjang kosong');
-  new bootstrap.Modal('#checkoutModal').show();
-});
-
-$('#confirm-pay').addEventListener('click', async ()=>{
-  try{
-    const items = Object.values(cart).map(it=>({product_id: it.id, qty: it.qty, price: it.price}));
-    const payload = {items, payment_method: $('#payment').value, note: $('#note').value};
-    await fetchJson(API('sales.php'), {
+async function doCheckout() {
+  if (!CART.length) return alert('Keranjang kosong');
+  const payment = $('#payment').value;
+  const note = $('#note').value || '';
+  const payload = {
+    items: CART,
+    payment,
+    note
+  };
+  try {
+    const r = await fetch('/api/sales.php', {
       method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      credentials: 'same-origin',
       body: JSON.stringify(payload)
     });
-    cart = {};
+    const j = await r.json();
+    if (!j.ok) {
+      alert('Gagal simpan transaksi: ' + (j.error || ''));
+      return;
+    }
+    // sukses
+    CART = [];
     renderCart();
     bootstrap.Modal.getInstance($('#checkoutModal')).hide();
-    alert('Transaksi berhasil disimpan');
-    loadProducts($('#search').value.trim());
-  }catch(e){ alert('Gagal simpan: '+e.message); }
-});
+    alert('Transaksi tersimpan. ID: ' + (j.id || '-'));
+  } catch (e) {
+    console.error(e);
+    alert('Gagal menyimpan transaksi (koneksi).');
+  }
+}
 
-// init
-loadProducts();
+// initApp dipanggil setelah auto-login di index.html (atau bisa dipanggil langsung)
+async function initApp() {
+  // search handler
+  const search = $('#search');
+  let lastQ = '';
+  async function doSearch(q) {
+    const list = await loadProducts(q);
+    renderProducts(list);
+    lastQ = q;
+  }
+  search.addEventListener('input', (e) => {
+    const q = e.target.value.trim();
+    // debounce sederhana
+    clearTimeout(search._t);
+    search._t = setTimeout(() => doSearch(q), 250);
+  });
+
+  // tombol checkout
+  $('#btn-checkout').addEventListener('click', () => {
+    const modal = new bootstrap.Modal($('#checkoutModal'));
+    $('#modal-total').textContent = $('#total').textContent;
+    modal.show();
+  });
+  $('#confirm-pay').addEventListener('click', doCheckout);
+
+  // initial load (tampilkan semua)
+  await doSearch('');
+  renderCart();
+}
+
+// Start app automatically if available (index.html calls login earlier, session should be created)
+// If index.html didn't call login, still init app (server may allow access with APP_REQUIRE_PIN=0)
+document.addEventListener('DOMContentLoaded', () => {
+  // small delay to allow auto-login request to settle
+  setTimeout(() => {
+    if (typeof initApp === 'function') initApp();
+  }, 250);
+});
