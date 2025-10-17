@@ -239,139 +239,86 @@ function remove(id) {
   renderCart();
 }
 
-// ==== Checkout ====
-async function onConfirmPay() {
-  if (!CART.length) return alert('Keranjang masih kosong.');
-  const method = qs('#payment').value;
-  const note   = qs('#note').value || '';
-
-  // payload ringkas: id, qty, price
-  const items = CART.map(it => ({ id: it.id, qty: it.qty, price: it.price }));
-
-  try {
-    const r = await fetch('/api/checkout.php', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ method, note, items })
-    });
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error || 'Gagal menyimpan transaksi');
-
-    // sukses: kosongkan keranjang, refresh produk (stok berkurang), tutup modal
-    CART = [];
-    renderCart();
-    await loadProducts();
-
-    const modalEl = document.getElementById('checkoutModal');
-    const modal = bootstrap.Modal.getInstance(modalEl);
-    modal?.hide();
-
-    alert('Transaksi berhasil.\nNo. Struk: ' + j.data?.sale_id);
-    qs('#note').value = '';
-  } catch (e) {
-    console.error(e);
-    alert(e.message || 'Gagal menyimpan transaksi');
-  }
-}
-
-// helper: konversi "Rp 12.345" -> 12345
-const parseRupiahInt = (s='') => Number(String(s).replace(/[^\d]/g,'') || 0);
-
-// ---- saat klik tombol Checkout: set default bayar = total & kembalian 0
-qs('#btn-checkout')?.addEventListener('click', () => {
-  if (!CART.length) return alert('Keranjang masih kosong.');
-  const totalNum = CART.reduce((a,b)=>a + b.qty*b.price, 0);
-  qs('#modal-total').textContent = rupiah(totalNum);
-  const pay = qs('#pay-amount');
-  pay.value = totalNum;                       // default = pas
-  qs('#change-label').textContent = rupiah(0);
-  new bootstrap.Modal('#checkoutModal').show();
-});
-
-// ---- hitung kembalian live
-qs('#pay-amount')?.addEventListener('input', () => {
-  const total = CART.reduce((a,b)=>a + b.qty*b.price, 0);
-  const bayar = Number(qs('#pay-amount').value || 0);
-  const kembali = Math.max(0, bayar - total);
-  qs('#change-label').textContent = rupiah(kembali);
-});
-
-// ====== CHECKOUT ======
-const modalEl = document.getElementById('checkoutModal');
-const bsModal = bootstrap.Modal.getOrCreateInstance(modalEl);
+// ====== CHECKOUT (versi tanpa getCartTotal) ======
+const modalEl  = document.getElementById('checkoutModal');
+const bsModal  = bootstrap.Modal.getOrCreateInstance(modalEl);
 const btnConfirm = document.getElementById('confirm-pay');
-const inputPay   = document.getElementById('payAmount');
+const inputPay   = document.getElementById('payAmount'); // pastikan id sama
 const inputNote  = document.getElementById('note');
 const selMethod  = document.getElementById('payment');
 
+// parser JSON aman (kalau response bukan JSON -> lempar error yg jelas)
 function parseJsonSafe(res) {
   return res.text().then(t => {
     try { return JSON.parse(t); }
-    catch (e) { throw new Error('Invalid JSON dari server: ' + t.slice(0, 180)); }
+    catch { throw new Error('Invalid JSON dari server: ' + t.slice(0, 200)); }
   });
 }
 
 btnConfirm.addEventListener('click', async () => {
+  // —— hitung total langsung dari cart
+  const total = Array.isArray(cart)
+    ? cart.reduce((sum, it) => sum + (Number(it.qty || 0) * Number(it.price || 0)), 0)
+    : 0;
+
   try {
-    // Kunci tombol
+    // kunci tombol
     btnConfirm.disabled = true;
     const oldTxt = btnConfirm.textContent;
     btnConfirm.textContent = 'Memproses...';
 
-    // Hitung total & payload
-    const total = getCartTotal(); // fungsi kamu yang sudah ada
-    const amount_paid = Number(inputPay.value || 0);
+    const amount_paid   = Number(inputPay?.value || 0);
     const change_amount = Math.max(0, amount_paid - total);
 
     const payload = {
-      method: selMethod.value || 'cash',
+      method: selMethod?.value || 'cash',
       amount_paid,
       change_amount,
-      note: (inputNote.value || '').trim(),
-      items: cart.map(i => ({ sku: i.sku, qty: i.qty, price: i.price, subtotal: i.qty * i.price }))
+      note: (inputNote?.value || '').trim(),
+      items: (cart || []).map(i => ({
+        sku: i.sku,
+        qty: Number(i.qty || 0),
+        price: Number(i.price || 0),
+        subtotal: Number(i.qty || 0) * Number(i.price || 0),
+      })),
     };
 
-    if (payload.items.length === 0) {
+    if (!payload.items.length) {
       alert('Keranjang masih kosong.');
       return;
     }
 
-    const res = await fetch('api/checkout.php', {
+    const res  = await fetch('api/checkout.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
     });
-
     const json = await parseJsonSafe(res);
 
     if (!json.ok) {
       throw new Error(json.error || 'Checkout gagal.');
     }
 
-    // Sukses: kosongkan keranjang, reload produk & tutup modal
+    // sukses → kosongkan keranjang, render ulang, reload produk, tutup modal
     cart.length = 0;
-    saveCart();
-    renderCart();
-    await loadProducts();
+    saveCart?.();          // kalau fungsi ini ada di project-mu
+    renderCart?.();        // kalau fungsi ini ada di project-mu
+    await loadProducts?.();// kalau fungsi ini ada di project-mu
 
-    // Tutup modal rapi
     bsModal.hide();
 
-    // Info sukses + kembalian
-    alert(`Transaksi sukses!\nKembalian: Rp ${Number(json.data?.change_amount ?? change_amount).toLocaleString('id-ID')}`);
+    alert(`Transaksi sukses!\nKembalian: Rp ${(json.data?.change_amount ?? change_amount).toLocaleString('id-ID')}`);
   } catch (err) {
     console.error(err);
     alert(err.message || 'Terjadi kesalahan saat checkout.');
   } finally {
-    // Selalu reset tombol & bersihkan backdrop yang mungkin tertinggal
+    // reset tombol & bersihkan backdrop nyangkut
     btnConfirm.disabled = false;
     btnConfirm.textContent = 'Konfirmasi Bayar';
 
-    // Guard-rail: hapus backdrop nyangkut & modal-open
     document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
     document.body.classList.remove('modal-open');
     document.body.style.removeProperty('overflow');
     document.body.style.removeProperty('paddingRight');
   }
 });
-
