@@ -45,9 +45,17 @@ function fail($msg, $code=400) { http_response_code($code); echo json_encode(['o
 
 // VERY SIMPLE pin auth for 1 user
 function check_pin() {
-    $expected = getenv('APP_PIN') ?: '1234';
-    $pin = $_SERVER['HTTP_X_APP_PIN'] ?? '';
-    if ($pin !== $expected) {
+    // ambil PIN expected dari ENV
+    $expected = trim((string)(getenv('APP_PIN') ?: '1234'));
+
+    // ambil PIN yang dikirim client: prioritas header, lalu query ?pin=
+    $hdr = $_SERVER['HTTP_X_APP_PIN'] ?? '';
+    // beberapa server menaruh header custom di key lain—antisipasi:
+    if ($hdr === '' && isset($_SERVER['HTTP_X_APP_PIN'])) { $hdr = $_SERVER['HTTP_X_APP_PIN']; }
+
+    $got = trim((string)($hdr !== '' ? $hdr : ($_GET['pin'] ?? '')));
+
+    if ($got !== $expected) {
         fail('Unauthorized: wrong PIN', 401);
     }
 }
