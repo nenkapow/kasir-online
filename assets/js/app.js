@@ -239,86 +239,90 @@ function remove(id) {
   renderCart();
 }
 
-// ====== CHECKOUT (versi tanpa getCartTotal) ======
-const modalEl  = document.getElementById('checkoutModal');
-const bsModal  = bootstrap.Modal.getOrCreateInstance(modalEl);
-const btnConfirm = document.getElementById('confirm-pay');
-const inputPay   = document.getElementById('payAmount'); // pastikan id sama
-const inputNote  = document.getElementById('note');
-const selMethod  = document.getElementById('payment');
+// ==========================
+// FIXED CHECKOUT HANDLER
+// ==========================
 
-// parser JSON aman (kalau response bukan JSON -> lempar error yg jelas)
-function parseJsonSafe(res) {
-  return res.text().then(t => {
-    try { return JSON.parse(t); }
-    catch { throw new Error('Invalid JSON dari server: ' + t.slice(0, 200)); }
+// pastikan cart tetap global
+window.cart = window.cart || [];
+
+const modalEl = document.getElementById('checkoutModal');
+const bsModal = bootstrap.Modal.getOrCreateInstance(modalEl);
+const btnConfirm = document.getElementById('confirm-pay');
+const inputPay = document.getElementById('payAmount');
+const inputNote = document.getElementById('note');
+const selMethod = document.getElementById('payment');
+const lblChange = document.querySelector('#checkoutModal small span'); // target Rp0 di kembalian
+const lblTotal = document.querySelector('#checkoutModal small strong'); // target total Rp20.000
+
+// Update kembalian realtime
+if (inputPay) {
+  inputPay.addEventListener('input', () => {
+    const pay = Number(inputPay.value || 0);
+    const total = (window.cart || []).reduce((sum, i) => sum + (i.qty * i.price), 0);
+    const change = Math.max(0, pay - total);
+    if (lblChange) lblChange.textContent = 'Rp ' + change.toLocaleString('id-ID');
   });
 }
 
 btnConfirm.addEventListener('click', async () => {
-  // —— hitung total langsung dari cart
-  const total = Array.isArray(cart)
-    ? cart.reduce((sum, it) => sum + (Number(it.qty || 0) * Number(it.price || 0)), 0)
-    : 0;
+  const total = (window.cart || []).reduce((sum, i) => sum + (i.qty * i.price), 0);
+  const pay = Number(inputPay.value || 0);
+  const change = Math.max(0, pay - total);
+
+  if (total <= 0) {
+    alert('Keranjang masih kosong.');
+    return;
+  }
 
   try {
-    // kunci tombol
     btnConfirm.disabled = true;
-    const oldTxt = btnConfirm.textContent;
     btnConfirm.textContent = 'Memproses...';
-
-    const amount_paid   = Number(inputPay?.value || 0);
-    const change_amount = Math.max(0, amount_paid - total);
 
     const payload = {
       method: selMethod?.value || 'cash',
-      amount_paid,
-      change_amount,
-      note: (inputNote?.value || '').trim(),
-      items: (cart || []).map(i => ({
+      amount_paid: pay,
+      change_amount: change,
+      note: inputNote?.value || '',
+      items: window.cart.map(i => ({
         sku: i.sku,
-        qty: Number(i.qty || 0),
-        price: Number(i.price || 0),
-        subtotal: Number(i.qty || 0) * Number(i.price || 0),
-      })),
+        qty: i.qty,
+        price: i.price,
+        subtotal: i.qty * i.price
+      }))
     };
 
-    if (!payload.items.length) {
-      alert('Keranjang masih kosong.');
-      return;
-    }
-
-    const res  = await fetch('api/checkout.php', {
+    const res = await fetch('api/checkout.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(payload)
     });
-    const json = await parseJsonSafe(res);
 
-    if (!json.ok) {
-      throw new Error(json.error || 'Checkout gagal.');
+    const text = await res.text();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch (e) {
+      throw new Error('Response bukan JSON:\n' + text);
     }
 
-    // sukses → kosongkan keranjang, render ulang, reload produk, tutup modal
-    cart.length = 0;
-    saveCart?.();          // kalau fungsi ini ada di project-mu
-    renderCart?.();        // kalau fungsi ini ada di project-mu
-    await loadProducts?.();// kalau fungsi ini ada di project-mu
+    if (!json.ok) throw new Error(json.error || 'Checkout gagal.');
+
+    // sukses: kosongkan keranjang & reload produk
+    window.cart = [];
+    saveCart?.();
+    renderCart?.();
+    await loadProducts?.();
 
     bsModal.hide();
-
-    alert(`Transaksi sukses!\nKembalian: Rp ${(json.data?.change_amount ?? change_amount).toLocaleString('id-ID')}`);
+    alert(`Transaksi sukses!\nKembalian: Rp ${change.toLocaleString('id-ID')}`);
   } catch (err) {
     console.error(err);
     alert(err.message || 'Terjadi kesalahan saat checkout.');
   } finally {
-    // reset tombol & bersihkan backdrop nyangkut
     btnConfirm.disabled = false;
     btnConfirm.textContent = 'Konfirmasi Bayar';
-
-    document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+    document.querySelectorAll('.modal-backdrop').forEach(e => e.remove());
     document.body.classList.remove('modal-open');
-    document.body.style.removeProperty('overflow');
-    document.body.style.removeProperty('paddingRight');
   }
 });
