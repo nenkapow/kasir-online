@@ -273,3 +273,74 @@ async function onConfirmPay() {
     alert(e.message || 'Gagal menyimpan transaksi');
   }
 }
+
+// helper: konversi "Rp 12.345" -> 12345
+const parseRupiahInt = (s='') => Number(String(s).replace(/[^\d]/g,'') || 0);
+
+// ---- saat klik tombol Checkout: set default bayar = total & kembalian 0
+qs('#btn-checkout')?.addEventListener('click', () => {
+  if (!CART.length) return alert('Keranjang masih kosong.');
+  const totalNum = CART.reduce((a,b)=>a + b.qty*b.price, 0);
+  qs('#modal-total').textContent = rupiah(totalNum);
+  const pay = qs('#pay-amount');
+  pay.value = totalNum;                       // default = pas
+  qs('#change-label').textContent = rupiah(0);
+  new bootstrap.Modal('#checkoutModal').show();
+});
+
+// ---- hitung kembalian live
+qs('#pay-amount')?.addEventListener('input', () => {
+  const total = CART.reduce((a,b)=>a + b.qty*b.price, 0);
+  const bayar = Number(qs('#pay-amount').value || 0);
+  const kembali = Math.max(0, bayar - total);
+  qs('#change-label').textContent = rupiah(kembali);
+});
+
+// ---- konfirmasi bayar
+async function onConfirmPay() {
+  if (!CART.length) return alert('Keranjang masih kosong.');
+  const method = qs('#payment').value;
+  const note   = qs('#note').value || '';
+  const total  = CART.reduce((a,b)=>a + b.qty*b.price, 0);
+  const amountPaid = Number(qs('#pay-amount').value || 0);
+
+  if (amountPaid < total) {
+    return alert('Nominal bayar kurang dari total.');
+  }
+
+  const items = CART.map(it => ({ id: it.id, qty: it.qty, price: it.price }));
+
+  try {
+    // disable tombol biar gak dobel klik
+    const btn = qs('#confirm-pay'); const txt = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Memproses...';
+
+    const r = await fetch('/api/checkout.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method, note, items, amount_paid: amountPaid })
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'Gagal menyimpan transaksi');
+
+    CART = [];
+    renderCart();
+    await loadProducts();
+
+    bootstrap.Modal.getInstance(document.getElementById('checkoutModal'))?.hide();
+
+    alert(
+      `Transaksi berhasil.\nNo. Struk: ${j.data.sale_id}\n` +
+      `Total: ${rupiah(j.data.total)}\n` +
+      `Bayar: ${rupiah(j.data.amount_paid)}\n` +
+      `Kembali: ${rupiah(j.data.change)}`
+    );
+
+    qs('#note').value = '';
+  } catch (e) {
+    console.error(e);
+    alert(e.message || 'Gagal menyimpan transaksi');
+  } finally {
+    const btn = qs('#confirm-pay'); if (btn) { btn.disabled = false; btn.textContent = 'Konfirmasi Bayar'; }
+  }
+}
