@@ -1,6 +1,0 @@
-[build]
-builder = "docker"
-
-[deploy]
-startCommand = "php -S 0.0.0.0:${PORT} -t /app"
-healthcheckPath = "/"
