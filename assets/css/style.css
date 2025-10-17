@@ -1,5 +1,0 @@
-body { -webkit-tap-highlight-color: transparent; }
-#product-list .card { border-radius: 16px; }
-#cart-list .item { display:flex; align-items:center; justify-content:space-between; padding:8px 12px; background:#fff; border-radius:12px; margin-bottom:8px; }
-.btn-qty { width:36px; height:36px; border-radius:50%; }
-.price { font-weight:600; }
