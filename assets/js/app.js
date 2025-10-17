@@ -246,16 +246,18 @@ async function onConfirmPay() {
   if (!CART.length) return alert('Keranjang masih kosong.');
   if (pay < total) return alert('Nominal bayar kurang.');
 
+  // === PAYLOAD BARU: pakai product_id, sertakan total ===
   const payload = {
-    method: qs('#payment').value,
-    amount_paid: pay,
-    change_amount: kembalian,
-    note: qs('#note').value,
+    method: qs('#payment').value || 'cash',
+    note: (qs('#note').value || '').toString(),
+    amount_paid: Number(pay),
+    change_amount: Number(kembalian),
+    total: Number(total),
     items: CART.map(i => ({
-      sku: i.sku,
-      qty: i.qty,
-      price: i.price,
-      subtotal: i.qty * i.price
+      product_id: Number(i.id),          // <-- pakai ID!
+      qty: Number(i.qty),
+      price: Number(i.price),
+      subtotal: Number(i.qty * i.price)  // backend kamu sudah ada kolom subtotal
     }))
   };
 
@@ -269,8 +271,12 @@ async function onConfirmPay() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error || 'Gagal checkout');
+
+    // backend kamu kirim 400 saat validasi gagal — tangani dua-duanya
+    const text = await r.text();
+    let j;
+    try { j = JSON.parse(text); } catch { throw new Error(text || 'Respon bukan JSON'); }
+    if (!r.ok || !j.ok) throw new Error(j?.error || 'Checkout gagal');
 
     CART = [];
     renderCart();
@@ -279,7 +285,7 @@ async function onConfirmPay() {
     bootstrap.Modal.getInstance(qs('#checkoutModal')).hide();
     alert(`Transaksi sukses!\nKembalian: ${rupiah(kembalian)}`);
   } catch (err) {
-    alert(err.message);
+    alert(err.message || 'Terjadi kesalahan saat checkout.');
   } finally {
     btn.disabled = false;
     btn.textContent = 'Konfirmasi Bayar';
