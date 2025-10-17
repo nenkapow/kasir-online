@@ -11,24 +11,23 @@ let CART = [];
 
 // ==== load awal ====
 window.addEventListener('DOMContentLoaded', () => {
-  // list produk untuk dijual
   loadProducts();
 
-  // search
   qs('#search').addEventListener('input', (e) => {
     renderProducts(filterProducts(e.target.value));
   });
 
-  // simpan produk (tambah / update)
   qs('#form-produk').addEventListener('submit', onSaveProduk);
 
-  // tombol checkout (placeholder—sesuaikan dengan punyamu)
+  // tombol checkout -> buka modal
   qs('#btn-checkout')?.addEventListener('click', () => {
-    // tampilkan modal & set total
+    if (!CART.length) return alert('Keranjang masih kosong.');
     qs('#modal-total').textContent = qs('#total').textContent;
-    const modal = new bootstrap.Modal('#checkoutModal');
-    modal.show();
+    new bootstrap.Modal('#checkoutModal').show();
   });
+
+  // >>>> INI YANG KURANG: konfirmasi bayar
+  qs('#confirm-pay')?.addEventListener('click', onConfirmPay);
 });
 
 // ==== Produk: fetch & render ====
@@ -113,9 +112,7 @@ async function onSaveProduk(e) {
   const price = Number(qs('#p-price').value || 0);
   const stock = Number(qs('#p-stock').value || 0);
 
-  if (!sku || !name) {
-    return showMsg('Harap isi SKU & Nama', 'danger');
-  }
+  if (!sku || !name) return showMsg('Harap isi SKU & Nama', 'danger');
 
   try {
     const fd = new FormData();
@@ -183,7 +180,7 @@ function showMsg(text, type='') {
   el.textContent = text || '';
 }
 
-// ==== Keranjang (sederhana contoh—sesuaikan dengan punyamu) ====
+// ==== Keranjang ====
 function addToCartById(id) {
   const p = PRODUCTS.find(x => String(x.id) === String(id));
   if (!p) return;
@@ -222,7 +219,6 @@ function renderCart() {
     wrap.appendChild(row);
   });
 
-  // binding qty
   wrap.querySelectorAll('[data-act="minus"]').forEach(b => b.onclick = () => qty(b.dataset.id, -1));
   wrap.querySelectorAll('[data-act="plus"]').forEach(b => b.onclick = () => qty(b.dataset.id, +1));
   wrap.querySelectorAll('[data-act="remove"]').forEach(b => b.onclick = () => remove(b.dataset.id));
@@ -241,4 +237,39 @@ function qty(id, d) {
 function remove(id) {
   CART = CART.filter(x => String(x.id) !== String(id));
   renderCart();
+}
+
+// ==== Checkout ====
+async function onConfirmPay() {
+  if (!CART.length) return alert('Keranjang masih kosong.');
+  const method = qs('#payment').value;
+  const note   = qs('#note').value || '';
+
+  // payload ringkas: id, qty, price
+  const items = CART.map(it => ({ id: it.id, qty: it.qty, price: it.price }));
+
+  try {
+    const r = await fetch('/api/checkout.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method, note, items })
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'Gagal menyimpan transaksi');
+
+    // sukses: kosongkan keranjang, refresh produk (stok berkurang), tutup modal
+    CART = [];
+    renderCart();
+    await loadProducts();
+
+    const modalEl = document.getElementById('checkoutModal');
+    const modal = bootstrap.Modal.getInstance(modalEl);
+    modal?.hide();
+
+    alert('Transaksi berhasil.\nNo. Struk: ' + j.data?.sale_id);
+    qs('#note').value = '';
+  } catch (e) {
+    console.error(e);
+    alert(e.message || 'Gagal menyimpan transaksi');
+  }
 }
