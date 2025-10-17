@@ -1,4 +1,11 @@
 <?php
+
+require __DIR__ . '/_init.php';
+
+// Tandai sesi sudah login agar is_authed() langsung true
+$_SESSION['authed'] = true;
+json(['ok' => true]);
+
 // api/login.php
 require_once __DIR__ . '/config.php';
 header('Content-Type: application/json; charset=utf-8');
