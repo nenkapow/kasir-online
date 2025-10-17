@@ -68,28 +68,20 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" defer></script>
 
-<!-- Auto-login (panggil sebelum app.js agar session tersedia) -->
+<!-- Auto-login server-side (APP_AUTOLOGIN=1) -->
 <script>
-  // panggil /api/login.php untuk membuat session jika APP_AUTOLOGIN=1 (server-side)
-  (async function () {
-    try {
-      const res = await fetch('/api/login.php', { method: 'POST' });
-      // server akan mengembalikan ok:true jika auto-login aktif atau kalau cred valid
-      // kita tidak perlu memeriksa body kecuali ingin menampilkan pesan
-      // lanjut ke app.js setelah ini
-    } catch (e) {
-      console.warn('Auto-login error', e);
-    }
+  (async () => {
+    try { await fetch('/api/login.php', { method: 'POST' }); } catch {}
   })();
 </script>
 
-<!-- file app utama -->
-<script src="assets/js/app.js" defer></script>
+<!-- Cache buster supaya versi baru kepakai -->
+<script src="assets/js/app.js?v=3" defer></script>
 
-<!-- Service Worker reg -->
+<!-- Service Worker -->
 <script>
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(console.error));
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=3').catch(console.error));
 }
 </script>
 </body>
