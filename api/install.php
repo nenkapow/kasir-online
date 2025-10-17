@@ -1,5 +1,5 @@
 <?php
-// Installer aman-ulang (idempotent)
+// Installer aman-ulang (idempotent), tanpa transaksi DDL
 require_once __DIR__ . '/config.php';
 header('Content-Type: text/plain; charset=utf-8');
 
@@ -7,12 +7,10 @@ $pdo = db();
 $pdo->exec("SET NAMES utf8mb4");
 
 try {
-  $pdo->beginTransaction();
-
-  // Matikan pengecekan FK sementara
+  // Matikan pengecekan FK sementara (DDL bisa auto-commit)
   $pdo->exec("SET FOREIGN_KEY_CHECKS=0");
 
-  // PRODUCTS
+  // 1) PRODUCTS
   $pdo->exec("
     CREATE TABLE IF NOT EXISTS products (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -24,7 +22,7 @@ try {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   ");
 
-  // SALES (dibuat sebelum sale_items)
+  // 2) SALES (wajib dibuat dulu sebelum sale_items)
   $pdo->exec("
     CREATE TABLE IF NOT EXISTS sales (
       id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -35,7 +33,7 @@ try {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   ");
 
-  // SALE_ITEMS (FK ke sales & products)
+  // 3) SALE_ITEMS (FK ke sales & products)
   $pdo->exec("
     CREATE TABLE IF NOT EXISTS sale_items (
       id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -48,17 +46,19 @@ try {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   ");
 
-  // Index tambahan
-  $pdo->exec("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)");
-  $pdo->exec("CREATE INDEX IF NOT EXISTS idx_sales_created ON sales(created_at)");
+  // 4) Index – buat hanya kalau belum ada (biar kompatibel semua versi)
+  $hasIdx = $pdo->query("SHOW INDEX FROM products WHERE Key_name='idx_products_name'")->fetch();
+  if (!$hasIdx) { $pdo->exec("CREATE INDEX idx_products_name ON products(name)"); }
+
+  $hasIdx2 = $pdo->query("SHOW INDEX FROM sales WHERE Key_name='idx_sales_created'")->fetch();
+  if (!$hasIdx2) { $pdo->exec("CREATE INDEX idx_sales_created ON sales(created_at)"); }
 
   // Aktifkan lagi FK check
   $pdo->exec("SET FOREIGN_KEY_CHECKS=1");
 
-  $pdo->commit();
   echo "OK: Struktur tabel siap. Demi keamanan, hapus file api/install.php ya.";
 } catch (Throwable $e) {
-  $pdo->rollBack();
+  // Jangan rollback di sini (DDL auto-commit), cukup cetak error
   http_response_code(500);
-  echo "Gagal: ".$e->getMessage();
+  echo "Gagal: " . $e->getMessage();
 }
