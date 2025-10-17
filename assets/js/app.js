@@ -1,186 +1,244 @@
-// assets/js/app.js
-// Simple cashier UI logic (initApp will run automatically after script load)
-// Assumes server-side session auth is active (we called /api/login.php earlier)
+// ==== util ====
+const rupiah = (n=0) =>
+  new Intl.NumberFormat('id-ID', { style:'currency', currency:'IDR', maximumFractionDigits:0 }).format(Number(n||0));
 
-const $ = s => document.querySelector(s);
-const $$ = s => Array.from(document.querySelectorAll(s));
+const qs = s => document.querySelector(s);
+const qsa = s => [...document.querySelectorAll(s)];
 
+// ==== state ====
+let PRODUCTS = [];
 let CART = [];
 
-function formatRp(v) {
-  return 'Rp' + (Number(v || 0)).toLocaleString('id-ID');
+// ==== load awal ====
+window.addEventListener('DOMContentLoaded', () => {
+  // list produk untuk dijual
+  loadProducts();
+
+  // search
+  qs('#search').addEventListener('input', (e) => {
+    renderProducts(filterProducts(e.target.value));
+  });
+
+  // simpan produk (tambah / update)
+  qs('#form-produk').addEventListener('submit', onSaveProduk);
+
+  // tombol checkout (placeholder—sesuaikan dengan punyamu)
+  qs('#btn-checkout')?.addEventListener('click', () => {
+    // tampilkan modal & set total
+    qs('#modal-total').textContent = qs('#total').textContent;
+    const modal = new bootstrap.Modal('#checkoutModal');
+    modal.show();
+  });
+});
+
+// ==== Produk: fetch & render ====
+async function loadProducts() {
+  try {
+    const r = await fetch('/api/products.php?q=');
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'Gagal ambil produk');
+    PRODUCTS = j.data || [];
+    renderProducts(PRODUCTS);
+  } catch (e) {
+    alert('Gagal koneksi ke server');
+    console.error(e);
+  }
 }
 
-async function loadProducts(q = '') {
-  try {
-    const url = '/api/products.php?q=' + encodeURIComponent(q);
-    const r = await fetch(url, { credentials: 'same-origin' });
-    const j = await r.json();
-    if (!j.ok) {
-      alert('Gagal ambil data produk: ' + (j.error || ''));
-      return [];
-    }
-    return j.data || [];
-  } catch (e) {
-    console.error(e);
-    alert('Gagal koneksi ke server');
-    return [];
-  }
+function filterProducts(q) {
+  q = (q || '').toLowerCase();
+  if (!q) return PRODUCTS;
+  return PRODUCTS.filter(p =>
+    (p.name||'').toLowerCase().includes(q) ||
+    (p.sku||'').toLowerCase().includes(q)
+  );
 }
 
 function renderProducts(list) {
-  const el = $('#product-list');
-  el.innerHTML = '';
+  const wrap = qs('#product-list');
+  wrap.innerHTML = '';
+
   if (!list.length) {
-    el.innerHTML = '<div class="col-12"><p class="text-muted">Tidak ada produk</p></div>';
+    wrap.innerHTML = `<div class="col-12"><div class="alert alert-warning mb-0">Belum ada produk.</div></div>`;
     return;
   }
+
   list.forEach(p => {
     const col = document.createElement('div');
-    col.className = 'col-6 col-md-4';
+    col.className = 'col-12 col-md-6 col-lg-4';
     col.innerHTML = `
-      <div class="card">
+      <div class="card h-100">
         <div class="card-body">
-          <h6 class="card-title mb-1">${escapeHtml(p.name || p.sku || 'Produk')}</h6>
-          <p class="card-text small text-muted mb-1">SKU: ${escapeHtml(p.sku || '')}</p>
-          <p class="card-text fw-bold">${formatRp(p.price)}</p>
-          <div class="d-flex justify-content-between">
-            <button class="btn btn-sm btn-primary btn-add" data-sku="${escapeHtml(p.sku)}">Tambah</button>
-            <small class="text-muted">Stok: ${p.stock ?? '-'}</small>
+          <div class="d-flex justify-content-between align-items-start">
+            <div>
+              <div class="small text-muted">${p.sku || '-'}</div>
+              <strong>${p.name}</strong>
+            </div>
+            <div class="ms-2 text-end">
+              <div>${rupiah(p.price)}</div>
+              <div class="small text-muted">Stok: ${p.stock}</div>
+            </div>
+          </div>
+        </div>
+        <div class="card-footer d-flex justify-content-between">
+          <button class="btn btn-sm btn-outline-primary" data-act="add" data-id="${p.id}">+ Keranjang</button>
+          <div class="btn-group">
+            <button class="btn btn-sm btn-outline-secondary" data-act="edit" data-id="${p.id}">Edit</button>
+            <button class="btn btn-sm btn-outline-danger" data-act="del" data-id="${p.id}">Hapus</button>
           </div>
         </div>
       </div>
     `;
-    el.appendChild(col);
+    wrap.appendChild(col);
   });
 
-  $$('.btn-add').forEach(btn => btn.addEventListener('click', e => {
-    const sku = e.currentTarget.dataset.sku;
-    const prod = list.find(x => x.sku === sku);
-    if (prod) addToCart(prod);
-  }));
+  // binding tombol
+  wrap.querySelectorAll('[data-act="add"]').forEach(btn => {
+    btn.addEventListener('click', () => addToCartById(btn.dataset.id));
+  });
+  wrap.querySelectorAll('[data-act="edit"]').forEach(btn => {
+    btn.addEventListener('click', () => fillFormById(btn.dataset.id));
+  });
+  wrap.querySelectorAll('[data-act="del"]').forEach(btn => {
+    btn.addEventListener('click', () => onDeleteProduk(btn.dataset.id));
+  });
 }
 
-function escapeHtml(s) {
-  if (!s) return '';
-  return String(s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+// ==== Form Produk: simpan / isi / hapus ====
+async function onSaveProduk(e) {
+  e.preventDefault();
+  const id    = qs('#p-id').value.trim();
+  const sku   = qs('#p-sku').value.trim();
+  const name  = qs('#p-name').value.trim();
+  const price = Number(qs('#p-price').value || 0);
+  const stock = Number(qs('#p-stock').value || 0);
+
+  if (!sku || !name) {
+    return showMsg('Harap isi SKU & Nama', 'danger');
+  }
+
+  try {
+    const fd = new FormData();
+    if (id) fd.append('id', id);
+    fd.append('sku', sku);
+    fd.append('name', name);
+    fd.append('price', String(price));
+    fd.append('stock', String(stock));
+
+    const r = await fetch('/api/product_save.php', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'Gagal simpan');
+
+    showMsg('Produk tersimpan', 'success');
+    resetFormProduk();
+    await loadProducts();
+  } catch (err) {
+    console.error(err);
+    showMsg(err.message || 'Gagal simpan', 'danger');
+  }
 }
 
-function addToCart(prod) {
-  const existing = CART.find(x => x.sku === prod.sku);
-  if (existing) existing.qty++;
-  else CART.push({ sku: prod.sku, name: prod.name, price: Number(prod.price), qty: 1 });
+function fillFormById(id) {
+  const p = PRODUCTS.find(x => String(x.id) === String(id));
+  if (!p) return;
+  qs('#p-id').value = p.id;
+  qs('#p-sku').value = p.sku || '';
+  qs('#p-name').value = p.name || '';
+  qs('#p-price').value = p.price || 0;
+  qs('#p-stock').value = p.stock || 0;
+  qs('#p-sku').focus();
+  showMsg('Mode edit: ubah lalu klik Simpan. Kosongkan ID untuk tambah baru.', 'info');
+}
+
+async function onDeleteProduk(id) {
+  const p = PRODUCTS.find(x => String(x.id) === String(id));
+  if (!p) return;
+  if (!confirm(`Hapus produk: ${p.name}?`)) return;
+
+  try {
+    const fd = new FormData();
+    fd.append('id', id);
+    const r = await fetch('/api/product_delete.php', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'Gagal menghapus');
+
+    showMsg('Produk dihapus', 'success');
+    await loadProducts();
+  } catch (e) {
+    console.error(e);
+    showMsg(e.message || 'Gagal menghapus', 'danger');
+  }
+}
+
+function resetFormProduk() {
+  qs('#form-produk').reset();
+  qs('#p-id').value = '';
+  showMsg('', '');
+}
+
+function showMsg(text, type='') {
+  const el = qs('#produk-msg');
+  el.className = 'small';
+  if (type) el.classList.add(`text-${type}`);
+  el.textContent = text || '';
+}
+
+// ==== Keranjang (sederhana contoh—sesuaikan dengan punyamu) ====
+function addToCartById(id) {
+  const p = PRODUCTS.find(x => String(x.id) === String(id));
+  if (!p) return;
+  const item = CART.find(x => x.id === p.id);
+  if (item) item.qty += 1; else CART.push({ ...p, qty:1 });
   renderCart();
 }
 
 function renderCart() {
-  const el = $('#cart-list');
-  el.innerHTML = '';
+  const wrap = qs('#cart-list');
+  wrap.innerHTML = '';
   let total = 0;
-  if (!CART.length) el.innerHTML = '<p class="text-muted">Keranjang kosong</p>';
-  CART.forEach(item => {
+
+  if (!CART.length) {
+    wrap.innerHTML = `<div class="text-muted">Belum ada item.</div>`;
+    qs('#total').textContent = rupiah(0);
+    return;
+  }
+
+  CART.forEach(i => {
+    total += i.qty * i.price;
     const row = document.createElement('div');
-    row.className = 'd-flex justify-content-between align-items-center py-1';
+    row.className = 'd-flex justify-content-between align-items-center border rounded p-2 mb-2';
     row.innerHTML = `
       <div>
-        <div class="fw-bold">${escapeHtml(item.name)}</div>
-        <div class="small text-muted">${escapeHtml(item.sku)}</div>
+        <strong>${i.name}</strong>
+        <div class="small text-muted">${i.sku} • ${rupiah(i.price)}</div>
       </div>
-      <div class="text-end">
-        <div>${formatRp(item.price)} x ${item.qty}</div>
-        <div class="mt-1">
-          <button class="btn btn-sm btn-outline-secondary btn-decr">-</button>
-          <button class="btn btn-sm btn-outline-secondary btn-incr">+</button>
-        </div>
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-sm btn-outline-secondary" data-act="minus" data-id="${i.id}">-</button>
+        <span>${i.qty}</span>
+        <button class="btn btn-sm btn-outline-secondary" data-act="plus" data-id="${i.id}">+</button>
+        <button class="btn btn-sm btn-outline-danger" data-act="remove" data-id="${i.id}">x</button>
       </div>
     `;
-    el.appendChild(row);
-
-    row.querySelector('.btn-decr').addEventListener('click', () => {
-      item.qty = Math.max(0, item.qty - 1);
-      if (item.qty === 0) CART = CART.filter(c => c.sku !== item.sku);
-      renderCart();
-    });
-    row.querySelector('.btn-incr').addEventListener('click', () => {
-      item.qty++;
-      renderCart();
-    });
-
-    total += item.price * item.qty;
+    wrap.appendChild(row);
   });
-  $('#total').textContent = formatRp(total);
-  $('#modal-total').textContent = formatRp(total);
+
+  // binding qty
+  wrap.querySelectorAll('[data-act="minus"]').forEach(b => b.onclick = () => qty(b.dataset.id, -1));
+  wrap.querySelectorAll('[data-act="plus"]').forEach(b => b.onclick = () => qty(b.dataset.id, +1));
+  wrap.querySelectorAll('[data-act="remove"]').forEach(b => b.onclick = () => remove(b.dataset.id));
+
+  qs('#total').textContent = rupiah(total);
 }
 
-async function doCheckout() {
-  if (!CART.length) return alert('Keranjang kosong');
-  const payment = $('#payment').value;
-  const note = $('#note').value || '';
-  const payload = {
-    items: CART,
-    payment,
-    note
-  };
-  try {
-    const r = await fetch('/api/sales.php', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      credentials: 'same-origin',
-      body: JSON.stringify(payload)
-    });
-    const j = await r.json();
-    if (!j.ok) {
-      alert('Gagal simpan transaksi: ' + (j.error || ''));
-      return;
-    }
-    // sukses
-    CART = [];
-    renderCart();
-    bootstrap.Modal.getInstance($('#checkoutModal')).hide();
-    alert('Transaksi tersimpan. ID: ' + (j.id || '-'));
-  } catch (e) {
-    console.error(e);
-    alert('Gagal menyimpan transaksi (koneksi).');
-  }
-}
-
-// initApp dipanggil setelah auto-login di index.html (atau bisa dipanggil langsung)
-async function initApp() {
-  // search handler
-  const search = $('#search');
-  let lastQ = '';
-  async function doSearch(q) {
-    const list = await loadProducts(q);
-    renderProducts(list);
-    lastQ = q;
-  }
-  search.addEventListener('input', (e) => {
-    const q = e.target.value.trim();
-    // debounce sederhana
-    clearTimeout(search._t);
-    search._t = setTimeout(() => doSearch(q), 250);
-  });
-
-  // tombol checkout
-  $('#btn-checkout').addEventListener('click', () => {
-    const modal = new bootstrap.Modal($('#checkoutModal'));
-    $('#modal-total').textContent = $('#total').textContent;
-    modal.show();
-  });
-  $('#confirm-pay').addEventListener('click', doCheckout);
-
-  // initial load (tampilkan semua)
-  await doSearch('');
+function qty(id, d) {
+  const it = CART.find(x => String(x.id) === String(id));
+  if (!it) return;
+  it.qty += d;
+  if (it.qty <= 0) CART = CART.filter(x => x !== it);
   renderCart();
 }
 
-// Start app automatically if available (index.html calls login earlier, session should be created)
-// If index.html didn't call login, still init app (server may allow access with APP_REQUIRE_PIN=0)
-document.addEventListener('DOMContentLoaded', () => {
-  // small delay to allow auto-login request to settle
-  setTimeout(() => {
-    if (typeof initApp === 'function') initApp();
-  }, 250);
-});
+function remove(id) {
+  CART = CART.filter(x => String(x.id) !== String(id));
+  renderCart();
+}
