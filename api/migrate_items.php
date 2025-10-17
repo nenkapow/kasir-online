@@ -19,20 +19,21 @@ function columnExists(PDO $pdo, string $table, string $column): bool {
   return (int)$st->fetchColumn() > 0;
 }
 
-function addColumnSmart(PDO $pdo, string $table, string $column, string $baseDDL, string $afterMaybe = null) {
+function addColumnSmart(PDO $pdo, string $table, string $column, string $baseDDL, ?string $after = null): void {
   if (columnExists($pdo, $table, $column)) {
     echo "SKIP: $table.$column sudah ada.\n";
     return;
   }
-  // Kalau after column ada, pakai AFTER; kalau tidak, tambah biasa.
-  if ($afterMaybe && columnExists($pdo, $table, $afterMaybe)) {
-    $sql = "ALTER TABLE `$table` ADD COLUMN $baseDDL AFTER `$afterMaybe`";
+  // DDL lengkap termasuk nama kolom
+  $colDDL = "`$column` $baseDDL";
+  if ($after && columnExists($pdo, $table, $after)) {
+    $sql = "ALTER TABLE `$table` ADD COLUMN $colDDL AFTER `$after`";
   } else {
-    $sql = "ALTER TABLE `$table` ADD COLUMN $baseDDL";
+    $sql = "ALTER TABLE `$table` ADD COLUMN $colDDL";
   }
   $pdo->exec($sql);
   echo "OK  : Tambah kolom $table.$column ($baseDDL"
-     . ($afterMaybe ? " [after $afterMaybe jika ada]" : "")
+     . ($after ? ", after $after (jika ada)" : "")
      . ")\n";
 }
 
@@ -46,12 +47,12 @@ try {
     if (tableExists($pdo, $t)) { $detail = $t; break; }
   }
   if (!$detail) {
-    echo "Gagal: Tidak menemukan tabel detail transaksi. Coba cek nama tabelmu (sales_items/sales_detail, dsb).\n";
+    echo "Gagal: Tidak menemukan tabel detail transaksi. Cek nama tabelmu (sales_items/sales_detail, dsb).\n";
     exit;
   }
   echo "Pakai tabel detail: $detail\n";
 
-  // Tambahkan kolom subtotal (INT), coba AFTER price kalau ada
+  // Tambah kolom subtotal INT, coba AFTER price kalau kolom price ada
   addColumnSmart($pdo, $detail, 'subtotal', 'INT NOT NULL DEFAULT 0', 'price');
 
   echo "\nSelesai. Kamu boleh hapus file ini (api/migrate_items.php).";
