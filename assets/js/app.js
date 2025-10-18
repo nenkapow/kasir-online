@@ -319,3 +319,69 @@ async function onConfirmPay() {
     btn.textContent = 'Konfirmasi Bayar';
   }
 }
+
+// --- SAFE STARTUP CLEANUP: buang backdrop yang nyangkut ---
+function cleanupBackdrops() {
+  try {
+    document.body.classList.remove('modal-open');
+    document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+  } catch (_) {}
+}
+
+// --- fungsi untuk buka modal checkout dengan aman ---
+function openCheckout() {
+  // kalau keranjang kosong, kasih info
+  if (!Array.isArray(CART) || CART.length === 0) {
+    alert('Keranjang masih kosong.');
+    return;
+  }
+
+  // hitung total & set UI di modal
+  const total = CART.reduce((s, i) => s + (Number(i.qty)||0) * (Number(i.price)||0), 0);
+  const modalTotal = document.getElementById('modal-total');
+  const payAmount  = document.getElementById('payAmount');
+  const changeLbl  = document.getElementById('change-label');
+
+  if (modalTotal) modalTotal.textContent = 'Rp ' + Number(total).toLocaleString('id-ID');
+  if (payAmount)  payAmount.value = total;
+  if (changeLbl)  changeLbl.textContent = 'Rp 0';
+
+  // buka modal pakai getOrCreateInstance biar aman
+  const modalEl = document.getElementById('checkoutModal');
+  if (!modalEl) return alert('Elemen modal tidak ditemukan.');
+  cleanupBackdrops();
+  const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+  modal.show();
+}
+
+// --- JANGAN LUPA: hitung kembalian realtime saat input berubah ---
+(function attachRealtimeChange() {
+  const input = document.getElementById('payAmount');
+  if (!input) return;
+  input.addEventListener('input', () => {
+    const total = CART.reduce((s, i) => s + i.qty * i.price, 0);
+    const pay   = Number(input.value || 0);
+    const kembalian = Math.max(0, pay - total);
+    const changeLbl = document.getElementById('change-label');
+    if (changeLbl) changeLbl.textContent = 'Rp ' + kembalian.toLocaleString('id-ID');
+  });
+})();
+
+// --- BIND UTAMA: langsung ke tombol Bayar (kalau ada) ---
+(function bindPrimaryCheckoutButton() {
+  const btn = document.getElementById('btn-checkout');
+  if (btn) btn.addEventListener('click', openCheckout);
+})();
+
+// --- BIND CADANGAN via DELEGASI: kalau tombol diganti/direload dinamis ---
+document.addEventListener('click', (e) => {
+  const hit = e.target.closest('#btn-checkout');
+  if (hit) {
+    e.preventDefault();
+    openCheckout();
+  }
+});
+
+// --- pastikan dibersihkan saat halaman selesai dimuat (kasus reload/PWA) ---
+window.addEventListener('pageshow', cleanupBackdrops);
+document.addEventListener('DOMContentLoaded', cleanupBackdrops);
