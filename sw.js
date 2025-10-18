@@ -1,4 +1,4 @@
-const CACHE = 'kasir-cache-v6';
+const CACHE='kasir-cache-v7';
 const ASSETS = [
   '/',
   'index.html',
