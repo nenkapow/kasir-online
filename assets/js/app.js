@@ -1,37 +1,49 @@
-// ==== util ====
+// =====================================================
+// Kasir Online - app.js (v7)  —  cocok untuk backend PHP $_POST
+// =====================================================
+
+// ---- util
 const rupiah = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 const qs = s => document.querySelector(s);
 const qsa = s => [...document.querySelectorAll(s)];
 
-// ==== state ====
+// ---- state
 let PRODUCTS = [];
 let CART = [];
 
-// ==== load awal ====
+// ---- boot
 window.addEventListener('DOMContentLoaded', () => {
+  // auto-login (silent)
+  fetch('/api/login.php', { method: 'POST' }).catch(()=>{});
+
   loadProducts();
 
-  qs('#search').addEventListener('input', e => {
+  qs('#search')?.addEventListener('input', e => {
     renderProducts(filterProducts(e.target.value));
   });
 
-  qs('#form-produk').addEventListener('submit', onSaveProduk);
+  qs('#form-produk')?.addEventListener('submit', onSaveProduk);
 
-  // tombol checkout
+  // tombol checkout -> buka modal
   qs('#btn-checkout')?.addEventListener('click', () => {
     if (!CART.length) return alert('Keranjang masih kosong.');
-    const total = CART.reduce((s, i) => s + i.qty * i.price, 0);
+    const total = getCartTotal();
     qs('#modal-total').textContent = rupiah(total);
-    qs('#change-label').textContent = rupiah(0);
-    qs('#payAmount').value = total;
+    qs('#payAmount').value = total;        // default: isi sama dengan total
+    updateChange();                        // hitung kembalian awal
     new bootstrap.Modal('#checkoutModal').show();
   });
 
+  // kembalian realtime
   qs('#payAmount')?.addEventListener('input', updateChange);
+
+  // konfirmasi bayar
   qs('#confirm-pay')?.addEventListener('click', onConfirmPay);
 });
 
-// ==== Produk ====
+// =====================================================
+// Produk
+// =====================================================
 async function loadProducts() {
   try {
     const r = await fetch('/api/products.php?q=');
@@ -40,8 +52,8 @@ async function loadProducts() {
     PRODUCTS = j.data || [];
     renderProducts(PRODUCTS);
   } catch (e) {
-    alert('Gagal koneksi ke server');
     console.error(e);
+    alert('Gagal koneksi ke server');
   }
 }
 
@@ -50,15 +62,16 @@ function filterProducts(q) {
   if (!q) return PRODUCTS;
   return PRODUCTS.filter(p =>
     (p.name || '').toLowerCase().includes(q) ||
-    (p.sku || '').toLowerCase().includes(q)
+    (p.sku  || '').toLowerCase().includes(q)
   );
 }
 
 function renderProducts(list) {
   const wrap = qs('#product-list');
   wrap.innerHTML = '';
+
   if (!list.length) {
-    wrap.innerHTML = `<div class="col-12"><div class="alert alert-warning">Belum ada produk.</div></div>`;
+    wrap.innerHTML = `<div class="col-12"><div class="alert alert-warning mb-0">Belum ada produk.</div></div>`;
     return;
   }
 
@@ -70,10 +83,10 @@ function renderProducts(list) {
         <div class="card-body">
           <div class="d-flex justify-content-between align-items-start">
             <div>
-              <div class="small text-muted">${p.sku}</div>
-              <strong>${p.name}</strong>
+              <div class="small text-muted">${p.sku || '-'}</div>
+              <strong>${p.name || '-'}</strong>
             </div>
-            <div class="text-end">
+            <div class="text-end ms-2">
               <div>${rupiah(p.price)}</div>
               <div class="small text-muted">Stok: ${p.stock}</div>
             </div>
@@ -101,12 +114,12 @@ function renderProducts(list) {
   );
 }
 
-// ==== CRUD Produk ====
+// ---- CRUD Produk
 async function onSaveProduk(e) {
   e.preventDefault();
-  const id = qs('#p-id').value.trim();
-  const sku = qs('#p-sku').value.trim();
-  const name = qs('#p-name').value.trim();
+  const id    = qs('#p-id').value.trim();
+  const sku   = qs('#p-sku').value.trim();
+  const name  = qs('#p-name').value.trim();
   const price = Number(qs('#p-price').value || 0);
   const stock = Number(qs('#p-stock').value || 0);
   if (!sku || !name) return showMsg('Isi SKU & Nama', 'danger');
@@ -122,23 +135,24 @@ async function onSaveProduk(e) {
     const r = await fetch('/api/product_save.php', { method: 'POST', body: fd });
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || 'Gagal simpan');
+
     showMsg('Produk tersimpan', 'success');
     resetFormProduk();
     await loadProducts();
   } catch (err) {
     console.error(err);
-    showMsg(err.message, 'danger');
+    showMsg(err.message || 'Gagal simpan', 'danger');
   }
 }
 
 function fillFormById(id) {
   const p = PRODUCTS.find(x => String(x.id) === String(id));
   if (!p) return;
-  qs('#p-id').value = p.id;
-  qs('#p-sku').value = p.sku;
-  qs('#p-name').value = p.name;
-  qs('#p-price').value = p.price;
-  qs('#p-stock').value = p.stock;
+  qs('#p-id').value    = p.id;
+  qs('#p-sku').value   = p.sku || '';
+  qs('#p-name').value  = p.name || '';
+  qs('#p-price').value = p.price || 0;
+  qs('#p-stock').value = p.stock || 0;
   showMsg('Mode edit aktif', 'info');
 }
 
@@ -146,12 +160,17 @@ async function onDeleteProduk(id) {
   const p = PRODUCTS.find(x => String(x.id) === String(id));
   if (!p) return;
   if (!confirm(`Hapus produk: ${p.name}?`)) return;
-  const fd = new FormData();
-  fd.append('id', id);
-  const r = await fetch('/api/product_delete.php', { method: 'POST', body: fd });
-  const j = await r.json();
-  if (!j.ok) return alert(j.error || 'Gagal hapus');
-  await loadProducts();
+
+  try {
+    const fd = new FormData();
+    fd.append('id', id);
+    const r = await fetch('/api/product_delete.php', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'Gagal hapus');
+    await loadProducts();
+  } catch (e) {
+    alert(e.message || 'Gagal menghapus');
+  }
 }
 
 function resetFormProduk() {
@@ -162,11 +181,13 @@ function resetFormProduk() {
 
 function showMsg(t, type) {
   const el = qs('#produk-msg');
-  el.className = 'small text-' + (type || 'muted');
+  el.className = 'small ' + (type ? `text-${type}` : 'text-muted');
   el.textContent = t || '';
 }
 
-// ==== Keranjang ====
+// =====================================================
+// Keranjang
+// =====================================================
 function addToCartById(id) {
   const p = PRODUCTS.find(x => String(x.id) === String(id));
   if (!p) return;
@@ -230,66 +251,71 @@ function remove(id) {
   renderCart();
 }
 
-// ==== Checkout ====
+function getCartTotal() {
+  return CART.reduce((s, i) => s + i.qty * i.price, 0);
+}
+
+// =====================================================
+// Checkout
+// =====================================================
 function updateChange() {
   const pay = Number(qs('#payAmount').value || 0);
-  const total = CART.reduce((s, i) => s + i.qty * i.price, 0);
-  const kembalian = Math.max(0, pay - total);
-  qs('#change-label').textContent = rupiah(kembalian);
+  const total = getCartTotal();
+  const change = Math.max(0, pay - total);
+  qs('#change-label').textContent = rupiah(change);
 }
 
 async function onConfirmPay() {
   const pay = Number(qs('#payAmount').value || 0);
-  const total = CART.reduce((s, i) => s + i.qty * i.price, 0);
-  const kembalian = Math.max(0, pay - total);
+  const total = getCartTotal();
+  const change = Math.max(0, pay - total);
 
   if (!CART.length) return alert('Keranjang masih kosong.');
-  if (pay < total) return alert('Nominal bayar kurang.');
+  if (pay < total)  return alert('Nominal bayar kurang.');
 
-  // === PAYLOAD BARU: pakai product_id, sertakan total ===
-  const payload = {
-    method: qs('#payment').value || 'cash',
-    note: (qs('#note').value || '').toString(),
-    amount_paid: Number(pay),
-    change_amount: Number(kembalian),
-    total: Number(total),
-    items: CART.map(i => ({
-      product_id: Number(i.id),          // <-- pakai ID!
-      qty: Number(i.qty),
-      price: Number(i.price),
-      subtotal: Number(i.qty * i.price)  // backend kamu sudah ada kolom subtotal
-    }))
-  };
+  // Susun items sesuai yang diharapkan backend
+  const items = CART.map(i => ({
+    product_id: Number(i.id),            // backend pakai ID
+    qty:        Number(i.qty),
+    price:      Number(i.price),
+    subtotal:   Number(i.qty * i.price)
+  }));
+
+  // Kirim sebagai FormData (bukan JSON)
+  const fd = new FormData();
+  fd.append('method',        qs('#payment').value || 'cash');
+  fd.append('note',          (qs('#note').value || '').toString());
+  fd.append('amount_paid',   String(pay));
+  fd.append('change_amount', String(change));
+  fd.append('total',         String(total));
+  fd.append('items',         JSON.stringify(items)); // JSON string di field "items"
 
   const btn = qs('#confirm-pay');
   btn.disabled = true;
   btn.textContent = 'Memproses...';
 
   try {
-    const r = await fetch('/api/checkout.php', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
+    const res  = await fetch('/api/checkout.php', { method: 'POST', body: fd });
+    const text = await res.text();
+    let data; try { data = JSON.parse(text); } catch { throw new Error(text || 'Respon bukan JSON'); }
+    if (!res.ok || !data?.ok) throw new Error(data?.error || 'Checkout gagal');
 
-    // backend kamu kirim 400 saat validasi gagal — tangani dua-duanya
-    const text = await r.text();
-    let j;
-    try { j = JSON.parse(text); } catch { throw new Error(text || 'Respon bukan JSON'); }
-    if (!r.ok || !j.ok) throw new Error(j?.error || 'Checkout gagal');
-
+    // sukses
     CART = [];
     renderCart();
     await loadProducts();
 
-    bootstrap.Modal.getInstance(qs('#checkoutModal')).hide();
-    alert(`Transaksi sukses!\nKembalian: ${rupiah(kembalian)}`);
+    // tutup modal & bersihkan backdrop
+    const m = bootstrap.Modal.getInstance(qs('#checkoutModal'));
+    m?.hide();
+    document.querySelectorAll('.modal-backdrop').forEach(e => e.remove());
+    document.body.classList.remove('modal-open');
+
+    alert(`Transaksi sukses!\nKembalian: ${rupiah(change)}`);
   } catch (err) {
     alert(err.message || 'Terjadi kesalahan saat checkout.');
   } finally {
     btn.disabled = false;
     btn.textContent = 'Konfirmasi Bayar';
-    document.querySelectorAll('.modal-backdrop').forEach(e => e.remove());
-    document.body.classList.remove('modal-open');
   }
 }
