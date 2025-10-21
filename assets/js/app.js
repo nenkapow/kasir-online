@@ -45,8 +45,8 @@ window.addEventListener('DOMContentLoaded', () => {
   // konfirmasi bayar
   qs('#confirm-pay')?.addEventListener('click', onConfirmPay);
 
-  // cleanup backdrop modal kalau perlu (PWA reload)
-  document.addEventListener('DOMContentLoaded', cleanupBackdrops);
+  // beresin backdrop modal kalau pernah nyangkut
+  cleanupBackdrops();
   window.addEventListener('pageshow', cleanupBackdrops);
 });
 
@@ -109,7 +109,7 @@ function startRender(source) {
   // render chunk pertama
   appendMore();
 
-  // pasang infinite scroll (IntersectionObserver)
+  // pasang infinite scroll
   setupObserver();
 }
 
@@ -120,9 +120,7 @@ function setupObserver() {
   if (observer) observer.disconnect();
   observer = new IntersectionObserver((entries) => {
     const entry = entries[0];
-    if (entry && entry.isIntersecting) {
-      appendMore();
-    }
+    if (entry && entry.isIntersecting) appendMore();
   }, { rootMargin: '400px 0px' });
   observer.observe(sentinel);
 }
@@ -185,7 +183,7 @@ function appendMore() {
 }
 
 // =====================================================
-// CRUD Produk (tetap sama)
+// CRUD Produk
 // =====================================================
 async function onSaveProduk(e) {
   e.preventDefault();
@@ -259,7 +257,7 @@ function showMsg(t, type) {
 }
 
 // =====================================================
-// Keranjang (tetap)
+// Keranjang
 // =====================================================
 function addToCartById(id) {
   const p = PRODUCTS.find(x => String(x.id) === String(id));
@@ -278,6 +276,7 @@ function renderCart() {
   if (!CART.length) {
     wrap.innerHTML = `<div class="text-muted">Belum ada item.</div>`;
     qs('#total') && (qs('#total').textContent = rupiah(0));
+    window.__updatePaybar?.();
     return;
   }
 
@@ -285,6 +284,7 @@ function renderCart() {
     total += i.qty * i.price;
     const row = document.createElement('div');
     row.className = 'd-flex justify-content-between align-items-center border rounded p-2 mb-2';
+    row.setAttribute('data-cart-item','1');               // untuk counter paybar
     row.innerHTML = `
       <div class="me-2">
         <strong>${i.name}</strong>
@@ -310,6 +310,7 @@ function renderCart() {
   );
 
   qs('#total') && (qs('#total').textContent = rupiah(total));
+  window.__updatePaybar?.();
 }
 
 function qty(id, d) {
@@ -330,7 +331,7 @@ function getCartTotal() {
 }
 
 // =====================================================
-// Checkout (tetap, plus defender UI modal)
+// Checkout
 // =====================================================
 function updateChange() {
   const pay = Number(qs('#payAmount')?.value || 0);
