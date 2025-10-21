@@ -74,3 +74,37 @@ try {
   http_response_code(400);
   echo json_encode(['ok'=>false,'error'=>$e->getMessage()]);
 }
+
+<?php
+// --- di paling atas checkout.php ---
+$ct = $_SERVER['CONTENT_TYPE'] ?? '';
+$raw = file_get_contents('php://input');
+
+// Deteksi JSON vs form
+if (stripos($ct, 'application/json') !== false) {
+    $data = json_decode($raw, true);
+    if (!is_array($data)) $data = [];
+} else {
+    // x-www-form-urlencoded / multipart
+    $data = $_POST;
+    // kalau frontend kirim "items" sebagai string JSON di field form
+    if (isset($data['items']) && is_string($data['items'])) {
+        $try = json_decode($data['items'], true);
+        if (is_array($try)) $data['items'] = $try;
+    }
+}
+
+$items = $data['items'] ?? [];
+if (!is_array($items)) $items = [];
+
+// DEBUG ke log Railway
+error_log('checkout payload CT=' . $ct);
+error_log('checkout raw=' . substr($raw, 0, 500)); // potong biar ga kepanjangan
+error_log('checkout parsed items count=' . count($items));
+
+// Validasi lama kamu boleh lanjut:
+if (count($items) === 0) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Item kosong']);
+    exit;
+}
