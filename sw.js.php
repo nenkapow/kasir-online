@@ -1,89 +1,120 @@
 <?php
-// sw.js.php — Service Worker dengan auto-update
+// sw.js.php — Service Worker dynamic versioning
+// Outputs JavaScript. Keep this file in web root.
+// -------------------------------------------------------------------
 header('Content-Type: application/javascript; charset=utf-8');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
-// Versi cache = timestamp deploy (tiap render file ini berubah)
-$VER = date('YmdHis');
-
-// Daftar aset inti yang perlu di-cache untuk offline
-$assets = [
-  '/',                // landing (index.html)
+$files = [
   '/index.html',
   '/report.html',
+  '/manifest.json',
   '/assets/css/style.css',
   '/assets/js/app.js',
   '/assets/js/report.js',
-  '/manifest.json',
 ];
 
-// Tambahkan query version ke semua aset biar pasti fresh tiap deploy
-$ASSETS_WITH_VER = array_map(
-  fn($p) => $p.(str_contains($p, '?') ? '' : ('?v='.$VER)),
-  $assets
-);
+// build version hash from file mtimes (fallback to time() if missing)
+$mtimes = '';
+foreach ($files as $f) {
+  $path = __DIR__ . $f;
+  $mtimes .= is_file($path) ? filemtime($path) : '';
+}
+$hash = substr(hash('sha256', $mtimes ?: (string)time()), 0, 10);
+$CACHE = "kasir-cache-v{$hash}";
+
+// core files to precache (add query to bust CDN caches gracefully)
+$core = array_map(fn($u) => $u . '?v=' . $hash, $files);
+
+// For offline fallback we’ll cache index.html
+$core[] = '/'; // some servers serve / as index
 ?>
-// ====== Service Worker ======
-const VERSION = 'v<?= $VER ?>';
-const CORE_ASSETS = <?= json_encode($ASSETS_WITH_VER, JSON_UNESCAPED_SLASHES) ?>;
+/* Auto-generated Service Worker (version: <?= $hash ?>) */
 
-// Install: cache aset inti
-self.addEventListener('install', (e) => {
-  e.waitUntil(
-    caches.open(VERSION)
-      .then((c) => c.addAll(CORE_ASSETS))
-      .then(() => self.skipWaiting())
+const CACHE_NAME = '<?= $CACHE ?>';
+const CORE = <?= json_encode($core, JSON_UNESCAPED_SLASHES) ?>;
+
+// Utility: check if request is navigation (HTML)
+function isNavigation(req) {
+  return req.mode === 'navigate' ||
+         (req.headers.get('accept') || '').includes('text/html');
+}
+
+// Install: pre-cache app shell
+self.addEventListener('install', (event) => {
+  self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(cache => cache.addAll(CORE)).catch(() => {})
   );
 });
 
-// Activate: hapus cache lama
-self.addEventListener('activate', (e) => {
-  e.waitUntil(
-    caches.keys()
-      .then((keys) => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k))))
-      .then(() => self.clients.claim())
-  );
+// Activate: clean old caches
+self.addEventListener('activate', (event) => {
+  event.waitUntil((async () => {
+    const names = await caches.keys();
+    await Promise.all(
+      names.filter(n => n.startsWith('kasir-cache-v') && n !== CACHE_NAME)
+           .map(n => caches.delete(n))
+    );
+    await self.clients.claim();
+  })());
 });
 
-// Fetch: network-first untuk HTML, stale-while-revalidate untuk static
-self.addEventListener('fetch', (e) => {
-  const req = e.request;
-  if (req.method !== 'GET') return;
-
+// Fetch strategy:
+// - API (/api/...) → network only (bypass cache)
+// - HTML/navigation → network-first, fallback to cache (offline safe)
+// - Assets (css/js/img/fonts) → stale-while-revalidate
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
   const url = new URL(req.url);
 
-  // Jangan ganggu endpoint API
-  if (url.pathname.startsWith('/api/')) return;
+  // Only handle GET
+  if (req.method !== 'GET') return;
 
-  // HTML: network-first + fallback cache
-  if (req.headers.get('accept')?.includes('text/html')) {
-    e.respondWith(
-      fetch(req)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(VERSION).then((c) => c.put(req, copy));
-          return res;
-        })
-        .catch(() => caches.match(req))
-    );
+  // Never cache API requests
+  if (url.pathname.startsWith('/api/')) {
+    event.respondWith(fetch(req).catch(() => new Response('{"ok":false,"error":"offline"}', {
+      status: 503, headers: { 'Content-Type': 'application/json' }
+    })));
     return;
   }
 
-  // Static: stale-while-revalidate
-  e.respondWith(
-    caches.match(req).then((cached) => {
-      const fetched = fetch(req)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(VERSION).then((c) => c.put(req, copy));
-          return res;
-        })
-        .catch(() => cached);
-      return cached || fetched;
-    })
-  );
+  // Navigation/HTML: network-first
+  if (isNavigation(req)) {
+    event.respondWith((async () => {
+      try {
+        const fresh = await fetch(req, { cache: 'no-store' });
+        const cache = await caches.open(CACHE_NAME);
+        cache.put(req, fresh.clone());
+        return fresh;
+      } catch (err) {
+        const cache = await caches.open(CACHE_NAME);
+        const cached = await cache.match(req) || await cache.match('/index.html?v=<?= $hash ?>') || await cache.match('/');
+        return cached || new Response('<h1>Offline</h1>', { headers: { 'Content-Type': 'text/html' }});
+      }
+    })());
+    return;
+  }
+
+  // Assets: stale-while-revalidate
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    const cached = await cache.match(req);
+    const fetchPromise = fetch(req).then((resp) => {
+      // only cache ok responses
+      if (resp && resp.status === 200 && resp.type !== 'opaque') {
+        cache.put(req, resp.clone());
+      }
+      return resp;
+    }).catch(() => null);
+
+    return cached || (await fetchPromise) || new Response(null, { status: 504 });
+  })());
 });
 
-// Opsional: bisa dipanggil untuk ambil alih SW lebih cepat
-self.addEventListener('message', (e) => {
-  if (e.data === 'skipWaiting') self.skipWaiting();
+// Optional: allow pages to trigger skipWaiting
+self.addEventListener('message', (event) => {
+  if (event.data === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
