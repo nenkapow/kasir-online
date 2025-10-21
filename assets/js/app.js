@@ -1,48 +1,57 @@
 // =====================================================
-// Kasir Online - app.js (v7)  —  cocok untuk backend PHP $_POST
+// Kasir Online - app.js (compact list + infinite scroll)
 // =====================================================
 
 // ---- util
 const rupiah = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 const qs = s => document.querySelector(s);
-const qsa = s => [...document.querySelectorAll(s)];
 
 // ---- state
 let PRODUCTS = [];
 let CART = [];
+
+// listing state (pagination/infinite)
+const PAGE_SIZE = 20;               // tampil awal 20 item
+let LIST = [];                      // hasil filter
+let nextIndex = 0;                  // dari indeks mana lanjut render
+let observer = null;                // IntersectionObserver sentinel
 
 // ---- boot
 window.addEventListener('DOMContentLoaded', () => {
   // auto-login (silent)
   fetch('/api/login.php', { method: 'POST' }).catch(()=>{});
 
+  // load awal
   loadProducts();
 
-  qs('#search')?.addEventListener('input', e => {
-    renderProducts(filterProducts(e.target.value));
-  });
+  // cari realtime + reset paging
+  const inputSearch = qs('#search');
+  if (inputSearch) {
+    inputSearch.addEventListener('input', e => {
+      const q = e.target.value;
+      startRender(filterProducts(q));
+    });
+  }
 
+  // simpan produk
   qs('#form-produk')?.addEventListener('submit', onSaveProduk);
 
-  // tombol checkout -> buka modal
-  qs('#btn-checkout')?.addEventListener('click', () => {
-    if (!CART.length) return alert('Keranjang masih kosong.');
-    const total = getCartTotal();
-    qs('#modal-total').textContent = rupiah(total);
-    qs('#payAmount').value = total;        // default: isi sama dengan total
-    updateChange();                        // hitung kembalian awal
-    new bootstrap.Modal('#checkoutModal').show();
-  });
+  // tombol checkout → modal
+  qs('#btn-checkout')?.addEventListener('click', openCheckout);
 
   // kembalian realtime
   qs('#payAmount')?.addEventListener('input', updateChange);
 
   // konfirmasi bayar
   qs('#confirm-pay')?.addEventListener('click', onConfirmPay);
+
+  // cleanup backdrop modal kalau perlu (PWA reload)
+  document.addEventListener('DOMContentLoaded', cleanupBackdrops);
+  window.addEventListener('pageshow', cleanupBackdrops);
 });
 
 // =====================================================
-// Produk
+// Produk: load + filter + COMPACT RENDER
 // =====================================================
 async function loadProducts() {
   try {
@@ -50,7 +59,7 @@ async function loadProducts() {
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || 'Gagal ambil produk');
     PRODUCTS = j.data || [];
-    renderProducts(PRODUCTS);
+    startRender(PRODUCTS);
   } catch (e) {
     console.error(e);
     alert('Gagal koneksi ke server');
@@ -66,55 +75,118 @@ function filterProducts(q) {
   );
 }
 
-function renderProducts(list) {
-  const wrap = qs('#product-list');
-  wrap.innerHTML = '';
+// ----- compact renderer (list-group) + pagination -----
+function startRender(source) {
+  LIST = Array.isArray(source) ? source : [];
+  nextIndex = 0;
 
-  if (!list.length) {
-    wrap.innerHTML = `<div class="col-12"><div class="alert alert-warning mb-0">Belum ada produk.</div></div>`;
+  const wrap = qs('#product-list');
+  if (!wrap) return;
+
+  // wadah list
+  wrap.innerHTML = `
+    <div id="lg" class="list-group"></div>
+    <div class="d-grid mt-2">
+      <button id="btn-more" class="btn btn-outline-secondary" style="display:none">Muat lebih…</button>
+    </div>
+    <div id="sentinel" class="py-2"></div>
+  `;
+
+  // event: tombol Muat lebih
+  wrap.querySelector('#btn-more')?.addEventListener('click', appendMore);
+
+  // event delegation utk tombol per baris (+/edit/hapus)
+  wrap.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    const id = btn.dataset.id;
+    const act = btn.dataset.act;
+    if (act === 'add') addToCartById(id);
+    else if (act === 'edit') fillFormById(id);
+    else if (act === 'del') onDeleteProduk(id);
+  });
+
+  // render chunk pertama
+  appendMore();
+
+  // pasang infinite scroll (IntersectionObserver)
+  setupObserver();
+}
+
+function setupObserver() {
+  const sentinel = qs('#sentinel');
+  if (!sentinel) return;
+
+  if (observer) observer.disconnect();
+  observer = new IntersectionObserver((entries) => {
+    const entry = entries[0];
+    if (entry && entry.isIntersecting) {
+      appendMore();
+    }
+  }, { rootMargin: '400px 0px' });
+  observer.observe(sentinel);
+}
+
+// render batch berikutnya
+function appendMore() {
+  const lg = qs('#lg');
+  const btnMore = qs('#btn-more');
+  if (!lg) return;
+
+  // tidak ada data
+  if (LIST.length === 0) {
+    lg.innerHTML = `<div class="list-group-item text-muted">Belum ada produk.</div>`;
+    btnMore && (btnMore.style.display = 'none');
     return;
   }
 
-  list.forEach(p => {
-    const col = document.createElement('div');
-    col.className = 'col-12 col-md-6 col-lg-4';
-    col.innerHTML = `
-      <div class="card h-100">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start">
-            <div>
-              <div class="small text-muted">${p.sku || '-'}</div>
-              <strong>${p.name || '-'}</strong>
-            </div>
-            <div class="text-end ms-2">
-              <div>${rupiah(p.price)}</div>
-              <div class="small text-muted">Stok: ${p.stock}</div>
-            </div>
-          </div>
-        </div>
-        <div class="card-footer d-flex justify-content-between">
-          <button class="btn btn-sm btn-outline-primary" data-act="add" data-id="${p.id}">+ Keranjang</button>
-          <div class="btn-group">
-            <button class="btn btn-sm btn-outline-secondary" data-act="edit" data-id="${p.id}">Edit</button>
-            <button class="btn btn-sm btn-outline-danger" data-act="del" data-id="${p.id}">Hapus</button>
-          </div>
-        </div>
-      </div>`;
-    wrap.appendChild(col);
+  const end = Math.min(nextIndex + PAGE_SIZE, LIST.length);
+  const slice = LIST.slice(nextIndex, end);
+
+  const frag = document.createDocumentFragment();
+  slice.forEach(p => {
+    const item = document.createElement('div');
+    item.className = 'list-group-item d-flex align-items-center justify-content-between gap-2';
+
+    // kiri: nama + sku + stok
+    const left = document.createElement('div');
+    left.className = 'flex-grow-1 text-truncate';
+    left.innerHTML = `
+      <div class="fw-semibold text-truncate">${p.name || '-'}</div>
+      <div class="small text-muted text-truncate">${p.sku || '-'} • Stok ${p.stock ?? 0}</div>
+    `;
+
+    // tengah: harga
+    const mid = document.createElement('div');
+    mid.className = 'text-end';
+    mid.innerHTML = `<div class="fw-semibold">${rupiah(p.price)}</div>`;
+
+    // kanan: actions mini
+    const right = document.createElement('div');
+    right.className = 'btn-group btn-group-sm';
+    right.innerHTML = `
+      <button class="btn btn-outline-primary"   data-act="add"  data-id="${p.id}" title="Tambah">+</button>
+      <button class="btn btn-outline-secondary" data-act="edit" data-id="${p.id}">Edit</button>
+      <button class="btn btn-outline-danger"    data-act="del"  data-id="${p.id}">Hapus</button>
+    `;
+
+    item.appendChild(left);
+    item.appendChild(mid);
+    item.appendChild(right);
+    frag.appendChild(item);
   });
 
-  wrap.querySelectorAll('[data-act="add"]').forEach(b =>
-    b.addEventListener('click', () => addToCartById(b.dataset.id))
-  );
-  wrap.querySelectorAll('[data-act="edit"]').forEach(b =>
-    b.addEventListener('click', () => fillFormById(b.dataset.id))
-  );
-  wrap.querySelectorAll('[data-act="del"]').forEach(b =>
-    b.addEventListener('click', () => onDeleteProduk(b.dataset.id))
-  );
+  lg.appendChild(frag);
+  nextIndex = end;
+
+  // toggle tombol "Muat lebih…"
+  const hasMore = nextIndex < LIST.length;
+  if (btnMore) btnMore.style.display = hasMore ? '' : 'none';
 }
 
-// ---- CRUD Produk
+// =====================================================
+// CRUD Produk (tetap sama)
+// =====================================================
 async function onSaveProduk(e) {
   e.preventDefault();
   const id    = qs('#p-id').value.trim();
@@ -138,7 +210,7 @@ async function onSaveProduk(e) {
 
     showMsg('Produk tersimpan', 'success');
     resetFormProduk();
-    await loadProducts();
+    await loadProducts();           // reload + reset paging otomatis
   } catch (err) {
     console.error(err);
     showMsg(err.message || 'Gagal simpan', 'danger');
@@ -181,12 +253,13 @@ function resetFormProduk() {
 
 function showMsg(t, type) {
   const el = qs('#produk-msg');
+  if (!el) return;
   el.className = 'small ' + (type ? `text-${type}` : 'text-muted');
   el.textContent = t || '';
 }
 
 // =====================================================
-// Keranjang
+// Keranjang (tetap)
 // =====================================================
 function addToCartById(id) {
   const p = PRODUCTS.find(x => String(x.id) === String(id));
@@ -198,12 +271,13 @@ function addToCartById(id) {
 
 function renderCart() {
   const wrap = qs('#cart-list');
+  if (!wrap) return;
   wrap.innerHTML = '';
   let total = 0;
 
   if (!CART.length) {
     wrap.innerHTML = `<div class="text-muted">Belum ada item.</div>`;
-    qs('#total').textContent = rupiah(0);
+    qs('#total') && (qs('#total').textContent = rupiah(0));
     return;
   }
 
@@ -212,7 +286,7 @@ function renderCart() {
     const row = document.createElement('div');
     row.className = 'd-flex justify-content-between align-items-center border rounded p-2 mb-2';
     row.innerHTML = `
-      <div>
+      <div class="me-2">
         <strong>${i.name}</strong>
         <div class="small text-muted">${i.sku} • ${rupiah(i.price)}</div>
       </div>
@@ -235,7 +309,7 @@ function renderCart() {
     })
   );
 
-  qs('#total').textContent = rupiah(total);
+  qs('#total') && (qs('#total').textContent = rupiah(total));
 }
 
 function qty(id, d) {
@@ -256,43 +330,40 @@ function getCartTotal() {
 }
 
 // =====================================================
-// Checkout
+// Checkout (tetap, plus defender UI modal)
 // =====================================================
 function updateChange() {
-  const pay = Number(qs('#payAmount').value || 0);
+  const pay = Number(qs('#payAmount')?.value || 0);
   const total = getCartTotal();
   const change = Math.max(0, pay - total);
-  qs('#change-label').textContent = rupiah(change);
+  qs('#change-label') && (qs('#change-label').textContent = rupiah(change));
 }
 
 async function onConfirmPay() {
-  const pay = Number(qs('#payAmount').value || 0);
+  const pay = Number(qs('#payAmount')?.value || 0);
   const total = getCartTotal();
   const change = Math.max(0, pay - total);
 
   if (!CART.length) return alert('Keranjang masih kosong.');
   if (pay < total)  return alert('Nominal bayar kurang.');
 
-  // Susun items sesuai yang diharapkan backend
   const items = CART.map(i => ({
-    product_id: Number(i.id),            // backend pakai ID
+    product_id: Number(i.id),
     qty:        Number(i.qty),
     price:      Number(i.price),
     subtotal:   Number(i.qty * i.price)
   }));
 
-  // Kirim sebagai FormData (bukan JSON)
   const fd = new FormData();
-  fd.append('method',        qs('#payment').value || 'cash');
-  fd.append('note',          (qs('#note').value || '').toString());
+  fd.append('method',        qs('#payment')?.value || 'cash');
+  fd.append('note',          (qs('#note')?.value || '').toString());
   fd.append('amount_paid',   String(pay));
   fd.append('change_amount', String(change));
   fd.append('total',         String(total));
-  fd.append('items',         JSON.stringify(items)); // JSON string di field "items"
+  fd.append('items',         JSON.stringify(items));
 
   const btn = qs('#confirm-pay');
-  btn.disabled = true;
-  btn.textContent = 'Memproses...';
+  if (btn) { btn.disabled = true; btn.textContent = 'Memproses...'; }
 
   try {
     const res  = await fetch('/api/checkout.php', { method: 'POST', body: fd });
@@ -300,27 +371,24 @@ async function onConfirmPay() {
     let data; try { data = JSON.parse(text); } catch { throw new Error(text || 'Respon bukan JSON'); }
     if (!res.ok || !data?.ok) throw new Error(data?.error || 'Checkout gagal');
 
-    // sukses
     CART = [];
     renderCart();
     await loadProducts();
 
     // tutup modal & bersihkan backdrop
-    const m = bootstrap.Modal.getInstance(qs('#checkoutModal'));
+    const m = bootstrap.Modal.getInstance(qs('#checkoutModal')) || bootstrap.Modal.getOrCreateInstance(qs('#checkoutModal'));
     m?.hide();
-    document.querySelectorAll('.modal-backdrop').forEach(e => e.remove());
-    document.body.classList.remove('modal-open');
+    cleanupBackdrops();
 
     alert(`Transaksi sukses!\nKembalian: ${rupiah(change)}`);
   } catch (err) {
     alert(err.message || 'Terjadi kesalahan saat checkout.');
   } finally {
-    btn.disabled = false;
-    btn.textContent = 'Konfirmasi Bayar';
+    if (btn) { btn.disabled = false; btn.textContent = 'Konfirmasi Bayar'; }
   }
 }
 
-// --- SAFE STARTUP CLEANUP: buang backdrop yang nyangkut ---
+// ------- Modal helpers -------
 function cleanupBackdrops() {
   try {
     document.body.classList.remove('modal-open');
@@ -328,60 +396,18 @@ function cleanupBackdrops() {
   } catch (_) {}
 }
 
-// --- fungsi untuk buka modal checkout dengan aman ---
 function openCheckout() {
-  // kalau keranjang kosong, kasih info
   if (!Array.isArray(CART) || CART.length === 0) {
     alert('Keranjang masih kosong.');
     return;
   }
+  const total = getCartTotal();
+  qs('#modal-total')  && (qs('#modal-total').textContent = rupiah(total));
+  qs('#payAmount')    && (qs('#payAmount').value = total);
+  qs('#change-label') && (qs('#change-label').textContent = rupiah(0));
 
-  // hitung total & set UI di modal
-  const total = CART.reduce((s, i) => s + (Number(i.qty)||0) * (Number(i.price)||0), 0);
-  const modalTotal = document.getElementById('modal-total');
-  const payAmount  = document.getElementById('payAmount');
-  const changeLbl  = document.getElementById('change-label');
-
-  if (modalTotal) modalTotal.textContent = 'Rp ' + Number(total).toLocaleString('id-ID');
-  if (payAmount)  payAmount.value = total;
-  if (changeLbl)  changeLbl.textContent = 'Rp 0';
-
-  // buka modal pakai getOrCreateInstance biar aman
-  const modalEl = document.getElementById('checkoutModal');
+  const modalEl = qs('#checkoutModal');
   if (!modalEl) return alert('Elemen modal tidak ditemukan.');
   cleanupBackdrops();
-  const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-  modal.show();
+  bootstrap.Modal.getOrCreateInstance(modalEl).show();
 }
-
-// --- JANGAN LUPA: hitung kembalian realtime saat input berubah ---
-(function attachRealtimeChange() {
-  const input = document.getElementById('payAmount');
-  if (!input) return;
-  input.addEventListener('input', () => {
-    const total = CART.reduce((s, i) => s + i.qty * i.price, 0);
-    const pay   = Number(input.value || 0);
-    const kembalian = Math.max(0, pay - total);
-    const changeLbl = document.getElementById('change-label');
-    if (changeLbl) changeLbl.textContent = 'Rp ' + kembalian.toLocaleString('id-ID');
-  });
-})();
-
-// --- BIND UTAMA: langsung ke tombol Bayar (kalau ada) ---
-(function bindPrimaryCheckoutButton() {
-  const btn = document.getElementById('btn-checkout');
-  if (btn) btn.addEventListener('click', openCheckout);
-})();
-
-// --- BIND CADANGAN via DELEGASI: kalau tombol diganti/direload dinamis ---
-document.addEventListener('click', (e) => {
-  const hit = e.target.closest('#btn-checkout');
-  if (hit) {
-    e.preventDefault();
-    openCheckout();
-  }
-});
-
-// --- pastikan dibersihkan saat halaman selesai dimuat (kasus reload/PWA) ---
-window.addEventListener('pageshow', cleanupBackdrops);
-document.addEventListener('DOMContentLoaded', cleanupBackdrops);
