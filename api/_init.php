@@ -59,3 +59,14 @@ function require_auth(): void {
 
 // Backward compatibility untuk kode lama yang memanggil check_pin()
 function check_pin(): bool { return is_authed(); }
+
+<?php
+// … koneksi $pdo kamu …
+ini_set('display_errors', 0);
+error_reporting(E_ALL);
+set_exception_handler(function($e){
+  header('Content-Type: application/json; charset=utf-8');
+  http_response_code(500);
+  echo json_encode(['ok'=>false,'error'=>$e->getMessage()]);
+  exit;
+});
