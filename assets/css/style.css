@@ -130,3 +130,5 @@ body.fast-mode .btn-delete { display: none !important; }
 }
 @media (min-width:768px){ .mobile-bar{ display:none; } }
 body { padding-bottom:72px; } /* ruang untuk bar HP */
+/* tombol kecil stok */
+.btn-icon-sm{ padding:.125rem .4rem; line-height:1; }
