@@ -8,6 +8,8 @@
   <!-- PWA -->
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#0ea5e9" />
+
+  <!-- (opsional) cegah cache HTTP, SW tetap pegang kendali -->
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
@@ -120,15 +122,19 @@
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" defer></script>
   <script src="assets/js/app.js" defer></script>
 
-  <!-- Service Worker: auto-update -->
+  <!-- Service Worker: auto-update + auto-reload sekali -->
   <script>
   if ('serviceWorker' in navigator) {
     (async () => {
       try {
+        // pakai sw dinamis
         const reg = await navigator.serviceWorker.register('/sw.js.php', { scope: '/' });
+
+        // cek update saat load & berkala
         reg.update();
         setInterval(() => reg.update(), 30000);
 
+        // kalau SW baru mengambil alih, reload 1x supaya file terbaru kepakai
         let reloaded = false;
         navigator.serviceWorker.addEventListener('controllerchange', () => {
           if (reloaded) return;
