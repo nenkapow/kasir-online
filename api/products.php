@@ -1,31 +1,51 @@
 <?php
-require __DIR__ . '/_init.php';
+// api/products.php
+// List produk untuk POS & kelola produk.
+// Mengembalikan: id, sku, name, stock, sell_price, cost_price, dan price (alias sell_price)
 
-require_auth(); // hormati APP_REQUIRE_PIN / session autologin
-
-$q = trim($_GET['q'] ?? '');
-$pdo = db();
+require_once __DIR__ . '/_init.php';
+header('Content-Type: application/json; charset=utf-8');
 
 try {
-  if ($q !== '') {
-    $st = $pdo->prepare(
-      "SELECT id, sku, name, price, stock
-       FROM products
-       WHERE name LIKE :q OR sku LIKE :q
-       ORDER BY name
-       LIMIT 100"
-    );
-    $st->execute([':q' => "%{$q}%"]);
-  } else {
-    $st = $pdo->query(
-      "SELECT id, sku, name, price, stock
-       FROM products
-       ORDER BY name
-       LIMIT 100"
-    );
-  }
+    $q = trim($_GET['q'] ?? '');
+    $params = [];
+    $where  = '';
 
-  json(['ok' => true, 'data' => $st->fetchAll()]);
+    if ($q !== '') {
+        $where = "WHERE sku LIKE ? OR name LIKE ?";
+        $like  = '%' . $q . '%';
+        $params = [$like, $like];
+    }
+
+    // Urutan nama biar enak dicari
+    $sql = "
+        SELECT
+            id,
+            sku,
+            name,
+            stock,
+            COALESCE(sell_price, 0) AS sell_price,
+            COALESCE(cost_price, 0) AS cost_price
+        FROM products
+        $where
+        ORDER BY name ASC
+        LIMIT 1000
+    ";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Kompatibilitas lama: alias 'price' = sell_price
+    foreach ($rows as &$r) {
+        $r['price'] = (float)$r['sell_price'];
+        $r['sell_price'] = (float)$r['sell_price'];
+        $r['cost_price'] = (float)$r['cost_price'];
+        $r['stock'] = (int)$r['stock'];
+        $r['id'] = (int)$r['id'];
+    }
+
+    echo json_encode(['ok' => true, 'data' => $rows], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {
-  json(['ok' => false, 'error' => $e->getMessage()], 500);
+    http_response_code(500);
+    echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
 }
