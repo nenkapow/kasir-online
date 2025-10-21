@@ -1,126 +1,108 @@
 <?php
 // api/purchase_create.php
-require __DIR__.'/_init.php';
+// Create purchase (stok masuk) dari form purchases.html
+// - Wajib SKU produk sudah ada (tidak membuat produk baru)
+// - Tambah stok = stok + qty
+// - Update cost_price = harga_beli terakhir
+// - Simpan total pembelian
+
+require_once __DIR__ . '/_init.php'; // pastikan ini mengisi $pdo (PDO MySQL) & header JSON default
+
 header('Content-Type: application/json; charset=utf-8');
 
-// (opsional) kalau kamu pakai PIN header, aktifkan:
-// if (!check_pin()) { http_response_code(403); echo json_encode(['ok'=>false,'error'=>'PIN salah']); exit; }
-
-function read_json_body() {
-  $raw = file_get_contents('php://input');
-  if (!$raw) return [];
-  $j = json_decode($raw, true);
-  return is_array($j) ? $j : [];
-}
-
-$body = array_merge($_POST ?? [], read_json_body());
-
-$supplier = trim($body['supplier_name'] ?? '');
-$note     = trim($body['note'] ?? '');
-$items    = $body['items'] ?? null; // array of { sku|product_id, qty, price }
-
-if (!is_array($items) || !count($items)) {
-  http_response_code(400);
-  echo json_encode(['ok'=>false, 'error'=>'items kosong']);
-  exit;
-}
-
 try {
-  $pdo = db();
-  $pdo->beginTransaction();
-
-  // ====== Generate invoice_code unik per hari ======
-  $today = (new DateTime('now', new DateTimeZone('Asia/Jakarta')))->format('Ymd');
-  $prefix = 'PB-'.$today.'-';
-  $sqlMax = "SELECT MAX(invoice_code) AS maxcode FROM purchases WHERE invoice_code LIKE :pfx";
-  $stMax  = $pdo->prepare($sqlMax);
-  $stMax->execute([':pfx'=>$prefix.'%']);
-  $rowMax = $stMax->fetch(PDO::FETCH_ASSOC);
-  $lastNo = 0;
-  if (!empty($rowMax['maxcode'])) {
-    $lastNo = intval(substr($rowMax['maxcode'], -3)); // 3 digit
-  }
-  $invoice = $prefix . str_pad((string)($lastNo+1), 3, '0', STR_PAD_LEFT);
-
-  // ====== Insert header purchases ======
-  $stIns = $pdo->prepare("INSERT INTO purchases (invoice_code, supplier_name, note) VALUES (:inv,:supp,:note)");
-  $stIns->execute([':inv'=>$invoice, ':supp'=>$supplier, ':note'=>$note]);
-  $purchase_id = (int)$pdo->lastInsertId();
-
-  // ====== Siapkan statement yang sering dipakai ======
-  $stFindBySku   = $pdo->prepare("SELECT id, sku, name, price, stock FROM products WHERE sku = :sku FOR UPDATE");
-  $stFindById    = $pdo->prepare("SELECT id, sku, name, price, stock FROM products WHERE id  = :id  FOR UPDATE");
-  $stInsItem     = $pdo->prepare("INSERT INTO purchase_items (purchase_id, product_id, qty, price) VALUES (:pid,:prod,:qty,:price)");
-  $stUpdStock    = $pdo->prepare("UPDATE products SET stock = stock + :qty WHERE id = :id");
-
-  $cleanItems = [];
-  foreach ($items as $i) {
-    $sku  = isset($i['sku']) ? trim((string)$i['sku']) : '';
-    $pid  = isset($i['product_id']) ? (int)$i['product_id'] : 0;
-    $qty  = max(0, (int)($i['qty'] ?? 0));
-    $price= (float)($i['price'] ?? 0);
-
-    if ($qty <= 0 || $price < 0) {
-      throw new RuntimeException('Qty/price tidak valid.');
+    // Ambil payload JSON
+    $raw = file_get_contents('php://input');
+    $data = json_decode($raw, true);
+    if (!is_array($data)) {
+        throw new Exception('Payload tidak valid.');
     }
 
-    // Ambil product
-    if ($pid > 0) {
-      $stFindById->execute([':id'=>$pid]);
-      $p = $stFindById->fetch(PDO::FETCH_ASSOC);
-    } else {
-      if ($sku === '') throw new RuntimeException('SKU atau product_id wajib ada.');
-      $stFindBySku->execute([':sku'=>$sku]);
-      $p = $stFindBySku->fetch(PDO::FETCH_ASSOC);
+    $supplier = trim($data['supplier_name'] ?? '');
+    $note     = trim($data['note'] ?? '');
+    $items    = $data['items'] ?? [];
+
+    if (!is_array($items) || count($items) === 0) {
+        throw new Exception('Minimal 1 item pembelian.');
     }
-    if (!$p) throw new RuntimeException('Produk tidak ditemukan (sku/id).');
 
-    $prod_id = (int)$p['id'];
+    // Validasi item
+    $cleanItems = [];
+    foreach ($items as $i => $it) {
+        $sku   = trim($it['sku'] ?? '');
+        $name  = trim($it['name'] ?? ''); // tidak dipakai untuk lookup, hanya fallback info
+        $qty   = (int)($it['qty'] ?? 0);
+        $price = (float)($it['price'] ?? 0);
 
-    // Insert item
-    $stInsItem->execute([
-      ':pid'  => $purchase_id,
-      ':prod' => $prod_id,
-      ':qty'  => $qty,
-      ':price'=> $price
-    ]);
+        if ($sku === '') {
+            throw new Exception("Baris ".($i+1).": SKU wajib diisi.");
+        }
+        if ($qty <= 0) {
+            throw new Exception("Baris ".($i+1).": Qty harus > 0.");
+        }
+        if ($price < 0) {
+            throw new Exception("Baris ".($i+1).": Harga tidak boleh negatif.");
+        }
 
-    // Update stok
-    $stUpdStock->execute([':qty'=>$qty, ':id'=>$prod_id]);
+        $cleanItems[] = [
+            'sku'   => $sku,
+            'name'  => $name,
+            'qty'   => $qty,
+            'price' => $price,
+        ];
+    }
 
-    $cleanItems[] = [
-      'product_id' => $prod_id,
-      'sku'        => $p['sku'],
-      'name'       => $p['name'],
-      'qty'        => $qty,
-      'price'      => $price,
-      'subtotal'   => round($qty * $price, 2),
-    ];
-  }
+    // Mulai transaksi
+    $pdo->beginTransaction();
 
-  // ====== Update total header ======
-  $pdo->prepare("
-    UPDATE purchases p
-       SET p.total = (SELECT IFNULL(SUM(subtotal),0) FROM purchase_items WHERE purchase_id = p.id)
-     WHERE p.id = :id
-  ")->execute([':id'=>$purchase_id]);
+    // Buat invoice_code sederhana: PB-YYYYMMDD-RAND4
+    $invoice = 'PB-' . date('Ymd') . '-' . str_pad((string)random_int(0, 9999), 4, '0', STR_PAD_LEFT);
 
-  $pdo->commit();
+    // Insert nota pembelian (total sementara 0)
+    $stmt = $pdo->prepare("INSERT INTO purchases (invoice_code, supplier_name, total, note) VALUES (?, ?, 0, ?)");
+    $stmt->execute([$invoice, $supplier ?: null, $note ?: null]);
+    $purchase_id = (int)$pdo->lastInsertId();
 
-  echo json_encode([
-    'ok' => true,
-    'purchase' => [
-      'id'           => $purchase_id,
-      'invoice_code' => $invoice,
-      'supplier_name'=> $supplier,
-      'note'         => $note,
-      'items'        => $cleanItems,
-      'total'        => array_sum(array_column($cleanItems,'subtotal')),
-      'created_at'   => (new DateTime('now', new DateTimeZone('Asia/Jakarta')))->format('Y-m-d H:i:s')
-    ]
-  ]);
+    // Siapkan statement yang dipakai berulang
+    $qFindProduct = $pdo->prepare("SELECT id FROM products WHERE sku = ? LIMIT 1");
+    $qInsertItem  = $pdo->prepare("INSERT INTO purchase_items (purchase_id, product_id, qty, price) VALUES (?, ?, ?, ?)");
+    $qUpdateProd  = $pdo->prepare("UPDATE products SET stock = stock + ?, cost_price = ? WHERE id = ?");
+
+    $grand = 0.0;
+
+    foreach ($cleanItems as $it) {
+        // Cari product_id dari SKU
+        $qFindProduct->execute([$it['sku']]);
+        $pid = $qFindProduct->fetchColumn();
+        if (!$pid) {
+            throw new Exception("Produk dengan SKU '{$it['sku']}' tidak ditemukan. Silakan buat produk terlebih dulu.");
+        }
+
+        // Insert item
+        $qInsertItem->execute([$purchase_id, $pid, $it['qty'], $it['price']]);
+
+        // Update stok & cost_price (modal) pakai harga beli terakhir
+        $qUpdateProd->execute([$it['qty'], $it['price'], $pid]);
+
+        $grand += ($it['qty'] * $it['price']);
+    }
+
+    // Update total nota
+    $stmt = $pdo->prepare("UPDATE purchases SET total = ? WHERE id = ?");
+    $stmt->execute([$grand, $purchase_id]);
+
+    $pdo->commit();
+
+    echo json_encode([
+        'ok' => true,
+        'purchase_id' => $purchase_id,
+        'invoice_code' => $invoice,
+        'total' => $grand,
+    ], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {
-  if ($pdo && $pdo->inTransaction()) $pdo->rollBack();
-  http_response_code(500);
-  echo json_encode(['ok'=>false, 'error'=>$e->getMessage()]);
+    if ($pdo && $pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+    http_response_code(400);
+    echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
 }
