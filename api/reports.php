@@ -1,33 +1,75 @@
 <?php
-require_once __DIR__ . '/config.php';
-check_pin();
-$pdo = db();
+require __DIR__.'/_init.php';
+header('Content-Type: application/json; charset=utf-8');
 
-$start = $_GET['start'] ?? date('Y-m-d');
-$end = $_GET['end'] ?? date('Y-m-d');
-// include end day
-$end_dt = date('Y-m-d 23:59:59', strtotime($end));
+// ❌ Tidak ada cek PIN
 
-// Summary
-$sumStmt = $pdo->prepare("SELECT DATE(created_at) as day, COUNT(*) as tx_count, SUM(total) as revenue
-                          FROM sales
-                          WHERE created_at BETWEEN :s AND :e
-                          GROUP BY DATE(created_at)
-                          ORDER BY day ASC");
-$sumStmt->execute([':s'=>$start, ':e'=>$end_dt]);
-$summary = $sumStmt->fetchAll();
+// ====== ambil rentang tanggal (lokal Asia/Jakarta) ======
+$from = $_GET['from'] ?? $_POST['from'] ?? '';
+$to   = $_GET['to']   ?? $_POST['to']   ?? '';
+if (!$from || !$to) {
+  $from = $to = (new DateTime('now', new DateTimeZone('Asia/Jakarta')))->format('Y-m-d');
+}
 
-// Top products
-$topStmt = $pdo->prepare("SELECT p.id, p.name, SUM(si.qty) as qty_sold, SUM(si.qty*si.price) as gross
-                          FROM sale_items si
-                          JOIN products p ON p.id = si.product_id
-                          JOIN sales s ON s.id = si.sale_id
-                          WHERE s.created_at BETWEEN :s AND :e
-                          GROUP BY p.id, p.name
-                          ORDER BY qty_sold DESC
-                          LIMIT 20");
-$topStmt->execute([':s'=>$start, ':e'=>$end_dt]);
-$top = $topStmt->fetchAll();
+// Konversi ke UTC: [from 00:00 lokal, to +1 hari 00:00 lokal)
+$tzLocal = new DateTimeZone('Asia/Jakarta');
+$tzUTC   = new DateTimeZone('UTC');
 
-ok(['summary'=>$summary, 'top_products'=>$top]);
-?>
+$fromLocal = DateTime::createFromFormat('Y-m-d H:i:s', $from.' 00:00:00', $tzLocal);
+$toLocal   = DateTime::createFromFormat('Y-m-d H:i:s', $to.' 00:00:00',   $tzLocal);
+if (!$fromLocal || !$toLocal) {
+  http_response_code(400);
+  echo json_encode(['ok'=>false, 'error'=>'Format tanggal salah (YYYY-MM-DD)']);
+  exit;
+}
+$toLocal->modify('+1 day');
+
+$fromUTC = (clone $fromLocal)->setTimezone($tzUTC)->format('Y-m-d H:i:s');
+$toUTC   = (clone $toLocal)->setTimezone($tzUTC)->format('Y-m-d H:i:s');
+
+try {
+  $pdo = db();
+
+  // Ringkasan harian (tampil tanggal WIB)
+  $sqlDaily = "
+    SELECT
+      DATE(CONVERT_TZ(s.created_at, '+00:00', '+07:00')) AS tgl,
+      COUNT(*) AS trx,
+      SUM(s.total) AS omzet
+    FROM sales s
+    WHERE s.created_at >= :fromUTC AND s.created_at < :toUTC
+    GROUP BY tgl
+    ORDER BY tgl ASC
+  ";
+  $stDaily = $pdo->prepare($sqlDaily);
+  $stDaily->execute([':fromUTC'=>$fromUTC, ':toUTC'=>$toUTC]);
+  $daily = $stDaily->fetchAll(PDO::FETCH_ASSOC);
+
+  // Produk terlaris
+  $sqlTop = "
+    SELECT
+      p.name AS produk,
+      SUM(si.qty) AS qty,
+      SUM(si.qty * si.price) AS penjualan
+    FROM sale_items si
+    JOIN sales s    ON s.id = si.sale_id
+    JOIN products p ON p.id = si.product_id
+    WHERE s.created_at >= :fromUTC AND s.created_at < :toUTC
+    GROUP BY si.product_id
+    ORDER BY penjualan DESC, qty DESC, produk ASC
+    LIMIT 50
+  ";
+  $stTop = $pdo->prepare($sqlTop);
+  $stTop->execute([':fromUTC'=>$fromUTC, ':toUTC'=>$toUTC]);
+  $top = $stTop->fetchAll(PDO::FETCH_ASSOC);
+
+  echo json_encode([
+    'ok'    => true,
+    'range' => ['from'=>$from, 'to'=>$to],
+    'daily' => $daily,
+    'top'   => $top,
+  ]);
+} catch (Throwable $e) {
+  http_response_code(500);
+  echo json_encode(['ok'=>false, 'error'=>$e->getMessage()]);
+}
