@@ -115,3 +115,14 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('message', (event) => {
   if (event.data === 'SKIP_WAITING') self.skipWaiting();
 });
+
+$files = [
+  '/index.html',
+  '/report.html',
+  '/purchases.html',      // ← tambah ini
+  '/manifest.json',
+  '/assets/css/style.css',
+  '/assets/js/app.js',
+  '/assets/js/report.js',
+  '/assets/js/purchases.js' // ← dan ini
+];
