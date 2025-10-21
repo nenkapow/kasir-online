@@ -121,6 +121,68 @@
   <!-- JS -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" defer></script>
   <script src="assets/js/app.js" defer></script>
+  
+  <script>
+(function(){
+  const $ = (s)=>document.querySelector(s);
+  const paybar = $('#paybarFixed');
+  const lblTotalKasir = $('#total');        // total yang sudah ada di halaman
+  const lblPaybarTotal = $('#paybar-total');
+  const lblPaybarCount = $('#paybar-count');
+  const btnPaybarPay = $('#paybar-pay');
+  const btnCheckout = $('#btn-checkout');   // tombol lama yang buka modal
+
+  function parseRupiah(str){
+    return Number(String(str||'').replace(/[^\d]/g,''))||0;
+  }
+
+  function getCartCount(){
+    // coba deteksi item keranjang; fallback ke hitung child di #cart-list
+    // sesuaikan selector jika kamu punya class/attr spesifik.
+    const byData = document.querySelectorAll('#cart-list [data-cart-item]').length;
+    if (byData) return byData;
+    // fallback generic:
+    return document.querySelectorAll('#cart-list > *').length;
+  }
+
+  function updatePaybar(){
+    const textTotal = (lblTotalKasir && lblTotalKasir.textContent) || 'Rp0';
+    const totalVal = parseRupiah(textTotal);
+    const count = getCartCount();
+
+    lblPaybarTotal.textContent = textTotal;
+    lblPaybarCount.textContent = count ? `${count} item` : '0 item';
+
+    // tampilkan bar hanya jika ada total > 0
+    const show = totalVal > 0;
+    paybar.classList.toggle('show', show);
+    document.body.classList.toggle('has-paybar-padding', show);
+  }
+
+  // tombol Bayar di bar memicu tombol checkout lama (modal sama)
+  btnPaybarPay.addEventListener('click', () => {
+    if (btnCheckout) btnCheckout.click();
+  });
+
+  // pantau perubahan total & keranjang, update otomatis
+  // 1) Observe label total
+  if (lblTotalKasir) {
+    new MutationObserver(updatePaybar).observe(lblTotalKasir, {childList:true, subtree:true, characterData:true});
+  }
+  // 2) Observe kontainer keranjang
+  const cart = document.getElementById('cart-list');
+  if (cart) {
+    new MutationObserver(updatePaybar).observe(cart, {childList:true, subtree:true});
+  }
+
+  // 3) panggil saat load pertama
+  window.addEventListener('DOMContentLoaded', updatePaybar);
+  window.addEventListener('load', updatePaybar);
+
+  // Opsional: expose supaya bisa dipanggil dari app.js-mu setelah renderCart()
+  window.__updatePaybar = updatePaybar;
+})();
+</script>
 
   <!-- Service Worker: auto-update + auto-reload sekali -->
   <script>
