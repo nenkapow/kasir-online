@@ -1,22 +1,39 @@
 <?php
 // api/product_save.php
 // Tambah / Edit produk.
-// - Tambah: boleh set stock awal.
-// - Edit: stock TIDAK bisa diubah (stok hanya lewat pembelian).
-// - sell_price bisa diubah; cost_price otomatis dari pembelian (bukan di sini).
+// - Tambah: boleh set stock awal (optional).
+// - Edit: stok TIDAK diubah di sini (stok hanya lewat pembelian).
+// - sell_price dapat diubah; cost_price berasal dari pembelian.
 
 require_once __DIR__ . '/_init.php';
 header('Content-Type: application/json; charset=utf-8');
 
+// Helper: ambil body JSON kalau header-nya application/json
+function get_json_body() {
+    $ct = $_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '';
+    if (stripos($ct, 'application/json') !== false) {
+        $raw = file_get_contents('php://input');
+        if ($raw !== false && $raw !== '') {
+            $j = json_decode($raw, true);
+            if (is_array($j)) return $j;
+        }
+    }
+    return null;
+}
+
 try {
-    // Terima dari FormData (x-www-form-urlencoded / multipart)
-    $id        = isset($_POST['id']) ? trim($_POST['id']) : '';
-    $sku       = trim($_POST['sku'] ?? '');
-    $name      = trim($_POST['name'] ?? '');
-    // backward-compat: ada yang masih kirim 'price' → anggap sell_price
-    $sellPrice = isset($_POST['sell_price']) ? $_POST['sell_price'] : ($_POST['price'] ?? 0);
+    // Terima data dari FormData/x-www-form-urlencoded (default) atau JSON
+    $body = get_json_body();
+    $src  = $body ?? $_POST;
+
+    $id        = isset($src['id']) ? trim((string)$src['id']) : '';
+    $sku       = trim((string)($src['sku']  ?? ''));
+    $name      = trim((string)($src['name'] ?? ''));
+    // Backward-compat: jika UI lama kirim 'price', anggap itu sell_price
+    $sellPrice = $src['sell_price'] ?? ($src['price'] ?? 0);
     $sellPrice = (float)$sellPrice;
-    $stock     = isset($_POST['stock']) ? (int)$_POST['stock'] : 0;
+    // stok hanya dipakai saat INSERT
+    $stock     = isset($src['stock']) ? (int)$src['stock'] : 0;
 
     if ($sku === '' || $name === '') {
         throw new Exception('SKU dan Nama wajib diisi.');
@@ -26,7 +43,7 @@ try {
     }
 
     if ($id === '' || $id === '0') {
-        // ====== INSERT ======
+        // ===== INSERT =====
         // SKU unik?
         $cek = $pdo->prepare("SELECT COUNT(*) FROM products WHERE sku = ?");
         $cek->execute([$sku]);
@@ -34,25 +51,21 @@ try {
             throw new Exception('SKU sudah digunakan.');
         }
 
-        // cost_price diisi sama dgn sell_price saat awal (bisa 0), nanti akan ditimpa dr pembelian
+        // Masukkan kedua kolom harga: price (legacy) & sell_price (baru).
+        // cost_price awal = 0; nanti di-update dari pembelian.
+        // NOTE: kalau skema kamu tidak punya kolom 'price', tidak masalah selama kolom itu nullable/default 0.
         $stmt = $pdo->prepare("
-            INSERT INTO products (sku, name, stock, sell_price, cost_price)
-            VALUES (?, ?, ?, ?, COALESCE(cost_price, 0))
+            INSERT INTO products (sku, name, price, sell_price, cost_price, stock)
+            VALUES (?, ?, ?, ?, 0, ?)
         ");
-        // karena COALESCE(cost_price,0) tidak bisa di VALUES, maka pakai angka langsung
-        $stmt = $pdo->prepare("
-            INSERT INTO products (sku, name, stock, sell_price, cost_price)
-            VALUES (?, ?, ?, ?, ?)
-        ");
-        $stmt->execute([$sku, $name, $stock, $sellPrice, 0]);
+        $stmt->execute([$sku, $name, $sellPrice, $sellPrice, $stock]);
 
         $newId = (int)$pdo->lastInsertId();
-
         echo json_encode(['ok' => true, 'id' => $newId], JSON_UNESCAPED_UNICODE);
         exit;
     }
 
-    // ====== UPDATE (tanpa ubah stok) ======
+    // ===== UPDATE (tanpa ubah stok) =====
     $id = (int)$id;
 
     // SKU unik untuk selain dirinya
@@ -64,12 +77,11 @@ try {
 
     $stmt = $pdo->prepare("
         UPDATE products
-        SET sku = ?, name = ?, sell_price = ?
-        WHERE id = ?
+           SET sku = ?, name = ?, price = ?, sell_price = ?
+         WHERE id = ?
     ");
-    $stmt->execute([$sku, $name, $sellPrice, $id]);
+    $stmt->execute([$sku, $name, $sellPrice, $sellPrice, $id]);
 
-    // stok sengaja tidak diubah di sini
     echo json_encode(['ok' => true, 'id' => $id], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {
     http_response_code(400);
