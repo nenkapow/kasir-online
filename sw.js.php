@@ -6,10 +6,12 @@ header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 $files = [
   '/index.html',
   '/report.html',
+  '/purchases.html',        // halaman pembelian
   '/manifest.json',
   '/assets/css/style.css',
   '/assets/js/app.js',
   '/assets/js/report.js',
+  '/assets/js/purchases.js' // jika ada skrip khusus pembelian
 ];
 
 $mtimes = '';
@@ -17,9 +19,9 @@ foreach ($files as $f) {
   $path = __DIR__ . $f;
   $mtimes .= is_file($path) ? filemtime($path) : '';
 }
-$hash = substr(hash('sha256', $mtimes ?: (string) time()), 0, 10);
+$hash  = substr(hash('sha256', $mtimes ?: (string) time()), 0, 10);
 $CACHE = "kasir-cache-v{$hash}";
-$core = array_map(fn($u) => $u . '?v=' . $hash, $files);
+$core  = array_map(fn($u) => $u . '?v=' . $hash, $files);
 $core[] = '/'; // index
 ?>
 /* Auto-generated Service Worker (version: <?= $hash ?>) */
@@ -33,35 +35,25 @@ function isNavigation(req) {
 }
 
 self.addEventListener('install', (event) => {
-  // langsung aktifkan SW baru
   self.skipWaiting();
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(CORE)).catch(() => {})
-  );
+  event.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(CORE)).catch(()=>{}));
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
-    // buang cache lama
     const names = await caches.keys();
     await Promise.all(
-      names
-        .filter(n => n.startsWith('kasir-cache-v') && n !== CACHE_NAME)
-        .map(n => caches.delete(n))
+      names.filter(n => n.startsWith('kasir-cache-v') && n !== CACHE_NAME)
+           .map(n => caches.delete(n))
     );
-    // kuasai semua tab
     await self.clients.claim();
   })());
 });
 
-// Strategi fetch:
-// - /api/*  : network only (biar data selalu fresh)
-// - HTML    : network-first, fallback cache (offline)
-// - assets  : stale-while-revalidate
+// /api → network only; HTML → network-first; assets → stale-while-revalidate
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
-
   if (req.method !== 'GET') return;
 
   if (url.pathname.startsWith('/api/')) {
@@ -82,15 +74,12 @@ self.addEventListener('fetch', (event) => {
         const cache = await caches.open(CACHE_NAME);
         cache.put(req, fresh.clone());
         return fresh;
-      } catch (err) {
+      } catch {
         const cache = await caches.open(CACHE_NAME);
-        const cached =
-          (await cache.match(req)) ||
-          (await cache.match('/index.html?v=<?= $hash ?>')) ||
-          (await cache.match('/'));
-        return cached || new Response('<h1>Offline</h1>', {
-          headers: { 'Content-Type': 'text/html' }
-        });
+        return (await cache.match(req))
+            || (await cache.match('/index.html?v=<?= $hash ?>'))
+            || (await cache.match('/'))
+            || new Response('<h1>Offline</h1>', { headers:{'Content-Type':'text/html'}});
       }
     })());
     return;
@@ -99,30 +88,14 @@ self.addEventListener('fetch', (event) => {
   event.respondWith((async () => {
     const cache = await caches.open(CACHE_NAME);
     const cached = await cache.match(req);
-
-    const fetching = fetch(req).then((resp) => {
-      if (resp && resp.status === 200 && resp.type !== 'opaque') {
-        cache.put(req, resp.clone());
-      }
+    const fetching = fetch(req).then(resp => {
+      if (resp && resp.status === 200 && resp.type !== 'opaque') cache.put(req, resp.clone());
       return resp;
-    }).catch(() => null);
-
+    }).catch(()=>null);
     return cached || (await fetching) || new Response(null, { status: 504 });
   })());
 });
 
-// opsional: terima pesan "SKIP_WAITING" dari halaman
 self.addEventListener('message', (event) => {
   if (event.data === 'SKIP_WAITING') self.skipWaiting();
 });
-
-$files = [
-  '/index.html',
-  '/report.html',
-  '/purchases.html',      // ← tambah ini
-  '/manifest.json',
-  '/assets/css/style.css',
-  '/assets/js/app.js',
-  '/assets/js/report.js',
-  '/assets/js/purchases.js' // ← dan ini
-];
