@@ -2,12 +2,11 @@
 require __DIR__ . '/_init.php';
 header('Content-Type: application/json; charset=utf-8');
 
-// ====== Ambil rentang tanggal (lokal Asia/Jakarta) ======
+// Ambil rentang tanggal (lokal Asia/Jakarta)
 $from = $_GET['from'] ?? $_POST['from'] ?? '';
 $to   = $_GET['to']   ?? $_POST['to']   ?? '';
 
 if (!$from || !$to) {
-  // default: hari ini (WIB)
   $from = $to = (new DateTime('now', new DateTimeZone('Asia/Jakarta')))->format('Y-m-d');
 }
 
@@ -32,7 +31,7 @@ $toUTC   = (clone $toLocal)->setTimezone($tzUTC)->format('Y-m-d H:i:s');
 try {
   $pdo = db();
 
-  // ====== Ringkasan harian (tanggal ditampilkan sebagai WIB) ======
+  // Ringkasan harian (tanggal ditampilkan sebagai WIB)
   $sqlDaily = "
     SELECT
       DATE(CONVERT_TZ(s.created_at, '+00:00', '+07:00')) AS tgl,
@@ -47,15 +46,15 @@ try {
   $stDaily->execute([':fromUTC' => $fromUTC, ':toUTC' => $toUTC]);
   $daily = $stDaily->fetchAll(PDO::FETCH_ASSOC);
 
-  // ====== Produk terlaris ======
+  // Produk terlaris
   $sqlTop = "
     SELECT
       p.name AS produk,
-      SUM(si.qty)                  AS qty,
-      SUM(si.qty * si.price)       AS penjualan
+      SUM(si.qty)            AS qty,
+      SUM(si.qty * si.price) AS penjualan
     FROM sale_items si
-    JOIN sales s     ON s.id = si.sale_id
-    JOIN products p  ON p.id = si.product_id
+    JOIN sales s    ON s.id = si.sale_id
+    JOIN products p ON p.id = si.product_id
     WHERE s.created_at >= :fromUTC AND s.created_at < :toUTC
     GROUP BY si.product_id
     ORDER BY penjualan DESC, qty DESC, produk ASC
@@ -65,14 +64,14 @@ try {
   $stTop->execute([':fromUTC' => $fromUTC, ':toUTC' => $toUTC]);
   $top = $stTop->fetchAll(PDO::FETCH_ASSOC);
 
-  // Kembalikan data + alias agar kompatibel dengan frontend lama
+  // kembalikan data + alias utk kompatibilitas
   echo json_encode([
-    'ok'        => true,
-    'range'     => ['from' => $from, 'to' => $to],
-    'daily'     => $daily,
-    'top'       => $top,
-    'summary'   => $daily, // alias untuk code lama yang baca 'summary'
-    'bestsellers' => $top  // alias untuk code lama yang baca 'bestsellers'
+    'ok'          => true,
+    'range'       => ['from' => $from, 'to' => $to],
+    'daily'       => $daily,
+    'top'         => $top,
+    'summary'     => $daily, // alias
+    'bestsellers' => $top     // alias
   ]);
 } catch (Throwable $e) {
   http_response_code(500);
