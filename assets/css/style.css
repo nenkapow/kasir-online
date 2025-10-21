@@ -54,3 +54,57 @@ body.fast-mode .btn-delete { display: none !important; }
   font-weight: 700;
   font-size: 1.05rem;
 }
+/* ====== HYBRID LAYOUT ====== */
+
+/* total besar (desktop) */
+.total-big {
+  background:#0d6efd;
+  color:#fff;
+  border-radius:12px;
+  padding:16px 20px;
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  min-height:92px;
+}
+
+.total-big .label { font-weight:600; opacity:.85; }
+.total-big .angka {
+  font-size:42px; line-height:1; font-weight:800;
+  letter-spacing:1px; text-shadow:0 2px 0 rgba(0,0,0,.15);
+}
+
+/* GRID desktop */
+@media (min-width: 992px) {
+  #kasir-grid {
+    display: grid;
+    grid-template-columns: 1.7fr 1fr;   /* kiri lebih lebar */
+    grid-template-areas:
+      "total  aksi"
+      "produk aksi"
+      "cari   aksi"
+      "daftar aksi"
+      "keranjang aksi";
+    gap: 16px;
+  }
+  #panel-total { grid-area: total; }
+  #panel-produk { grid-area: produk; }
+  #panel-cari { grid-area: cari; }
+  #panel-daftar { grid-area: daftar; }
+  #panel-keranjang { grid-area: keranjang; }
+  #panel-aksi { grid-area: aksi; display:block !important; }
+
+  /* sembunyikan paybar mobile kalau kamu pakai; biar desktop bersih */
+  #paybarFixed { display:none !important; }
+}
+
+/* MOBILE: panel total disembunyikan (tetap ada untuk sinkron angka) */
+@media (max-width: 991.98px) {
+  #panel-total { display:none; }
+}
+
+/* list-group item agar padat seperti POS */
+#lg .list-group-item {
+  padding:10px 12px;
+}
+#lg .btn-group .btn { min-width:58px; }
