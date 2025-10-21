@@ -1,7 +1,7 @@
 <?php
 // api/products.php
-// List produk untuk POS & kelola produk.
-// Mengembalikan: id, sku, name, stock, sell_price, cost_price, dan price (alias sell_price)
+// List produk untuk POS & Kelola Produk.
+// Output: id, sku, name, stock, sell_price, cost_price, dan price (alias sell_price)
 
 require_once __DIR__ . '/_init.php';
 header('Content-Type: application/json; charset=utf-8');
@@ -17,31 +17,32 @@ try {
         $params = [$like, $like];
     }
 
-    // Urutan nama biar enak dicari
+    // Ambil sell_price/cost_price kalau ada; fallback ke price lama jika sell_price NULL
     $sql = "
         SELECT
             id,
             sku,
             name,
-            stock,
-            COALESCE(sell_price, 0) AS sell_price,
-            COALESCE(cost_price, 0) AS cost_price
+            CAST(stock AS SIGNED) AS stock,
+            CAST(COALESCE(sell_price, price, 0) AS DECIMAL(12,2)) AS sell_price,
+            CAST(COALESCE(cost_price, 0)          AS DECIMAL(12,2)) AS cost_price
         FROM products
         $where
         ORDER BY name ASC
         LIMIT 1000
     ";
+
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // Kompatibilitas lama: alias 'price' = sell_price
     foreach ($rows as &$r) {
-        $r['price'] = (float)$r['sell_price'];
+        $r['id']         = (int)$r['id'];
+        $r['stock']      = (int)$r['stock'];
         $r['sell_price'] = (float)$r['sell_price'];
         $r['cost_price'] = (float)$r['cost_price'];
-        $r['stock'] = (int)$r['stock'];
-        $r['id'] = (int)$r['id'];
+        $r['price']      = $r['sell_price']; // alias untuk UI lama
     }
 
     echo json_encode(['ok' => true, 'data' => $rows], JSON_UNESCAPED_UNICODE);
