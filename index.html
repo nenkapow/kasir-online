@@ -9,7 +9,7 @@
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#0ea5e9" />
 
-  <!-- (opsional) cegah cache HTTP, SW tetap pegang kendali -->
+  <!-- (opsional) cegah cache HTTP -->
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
@@ -17,19 +17,6 @@
   <!-- CSS -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
   <link rel="stylesheet" href="assets/css/style.css" />
-
-  <!-- Style kecil untuk Pay Bar (aman kalau belum ada di style.css) -->
-  <style>
-    .paybar-fixed{
-      position: fixed; left: 0; right: 0; bottom: 0;
-      display: none; align-items: center; justify-content: space-between;
-      gap: .75rem; padding: .75rem 1rem; background:#fff; border-top:1px solid #eee;
-      z-index: 1050;
-    }
-    .paybar-fixed.show{ display: flex; }
-    body.has-paybar-padding{ padding-bottom: 78px; } /* ruang buat bar */
-    .paybar-info{ font-size: 0.95rem; }
-  </style>
 </head>
 <body class="bg-light">
 
@@ -40,10 +27,21 @@
     </div>
   </nav>
 
-  <main class="container py-3">
+  <!--
+    MOBILE: semuanya ditumpuk seperti biasa (form → daftar → keranjang).
+    DESKTOP: area ini diatur ulang jadi layout kasir desktop via CSS grid.
+  -->
+  <main id="kasir-grid" class="container py-3">
+    <!-- TOTAL BESAR (desktop only, mobile disembunyikan via CSS) -->
+    <section id="panel-total" class="mb-3">
+      <div class="total-big shadow-sm">
+        <div class="label">TOTAL</div>
+        <div id="total-big" class="angka">Rp0</div>
+      </div>
+    </section>
 
-    <!-- Kelola Produk -->
-    <div class="card mb-3">
+    <!-- FORM PRODUK (tambah/ubah/hapus) -->
+    <section id="panel-produk" class="card mb-3">
       <div class="card-header d-flex align-items-center justify-content-between">
         <strong>Kelola Produk</strong>
         <small class="text-muted">Tambah / Ubah / Hapus</small>
@@ -76,26 +74,45 @@
           </div>
         </form>
       </div>
-    </div>
+    </section>
 
-    <!-- Pencarian + daftar produk -->
-    <div class="input-group mb-3">
-      <span class="input-group-text">Cari</span>
-      <input type="text" id="search" class="form-control" placeholder="Nama / SKU barang..." autofocus />
-    </div>
+    <!-- PENCARIAN -->
+    <section id="panel-cari" class="mb-3">
+      <div class="input-group">
+        <span class="input-group-text">Cari</span>
+        <input type="text" id="search" class="form-control" placeholder="Nama / SKU barang..." autofocus />
+      </div>
+    </section>
 
-    <div id="product-list" class="row g-2"></div>
+    <!-- DAFTAR PRODUK (render oleh app.js) -->
+    <section id="panel-daftar" class="mb-3">
+      <div id="product-list" class="row g-2"></div>
+    </section>
 
-    <hr />
-    <h5>Keranjang</h5>
-    <div id="cart-list"></div>
-    <div class="d-flex justify-content-between align-items-center mt-2">
-      <strong>Total: <span id="total">Rp0</span></strong>
-      <button id="btn-checkout" class="btn btn-success btn-lg">Bayar</button>
-    </div>
+    <!-- KERANJANG + TOTAL (mobile visible; desktop tetap ada untuk sinkron angka) -->
+    <section id="panel-keranjang" class="mb-3">
+      <h5>Keranjang</h5>
+      <div id="cart-list"></div>
+      <div class="d-flex justify-content-between align-items-center mt-2">
+        <strong>Total: <span id="total">Rp0</span></strong>
+        <button id="btn-checkout" class="btn btn-success btn-lg">Bayar</button>
+      </div>
+    </section>
+
+    <!-- PANEL AKSI KANAN (desktop only): tombol bayar besar + catatan/metode singkat -->
+    <aside id="panel-aksi" class="d-none d-lg-block">
+      <div class="card sticky-top" style="top: 92px">
+        <div class="card-body d-grid gap-2">
+          <button id="btn-checkout-desktop" class="btn btn-success btn-lg">Bayar (Enter)</button>
+          <div class="small text-muted">
+            Tips: tekan <kbd>/</kbd> untuk fokus pencarian, <kbd>Enter</kbd> untuk bayar.
+          </div>
+        </div>
+      </div>
+    </aside>
   </main>
 
-  <!-- Modal Checkout -->
+  <!-- MODAL CHECKOUT (dipakai HP & desktop) -->
   <div class="modal fade" id="checkoutModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog">
       <div class="modal-content">
@@ -131,81 +148,48 @@
     </div>
   </div>
 
-  <!-- Sticky Pay Bar (HARUS di dalam <body>) -->
-  <div id="paybarFixed" class="paybar-fixed">
-    <div class="paybar-info">
-      <span id="paybar-count">0 item</span> •
-      <strong id="paybar-total">Rp0</strong>
-    </div>
-    <button id="paybar-pay" class="btn btn-success btn-lg">Bayar</button>
-  </div>
-
   <!-- JS -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" defer></script>
   <script src="assets/js/app.js" defer></script>
 
-  <!-- Sticky Pay Bar controller + SW auto-update -->
+  <!-- Sinkron angka TOTAL ke “total-big” & tombol bayar desktop -->
   <script>
-  (function(){
-    const $ = (s)=>document.querySelector(s);
-    const paybar = $('#paybarFixed');
-    const lblTotalKasir = $('#total');
-    const lblPaybarTotal = $('#paybar-total');
-    const lblPaybarCount = $('#paybar-count');
-    const btnPaybarPay = $('#paybar-pay');
-    const btnCheckout = $('#btn-checkout');
-
-    function parseRupiah(str){ return Number(String(str||'').replace(/[^\d]/g,''))||0; }
-    function getCartCount(){
-      const byData = document.querySelectorAll('#cart-list [data-cart-item]').length;
-      if (byData) return byData;
-      return document.querySelectorAll('#cart-list > *').length;
-    }
-
-    function updatePaybar(){
-      const textTotal = (lblTotalKasir && lblTotalKasir.textContent) || 'Rp0';
-      const totalVal  = parseRupiah(textTotal);
-      const count     = getCartCount();
-
-      lblPaybarTotal.textContent = textTotal;
-      lblPaybarCount.textContent = count ? `${count} item` : '0 item';
-
-      const show = totalVal > 0;
-      paybar.classList.toggle('show', show);
-      document.body.classList.toggle('has-paybar-padding', show);
-    }
-
-    btnPaybarPay?.addEventListener('click', () => btnCheckout?.click());
-
-    if (lblTotalKasir) {
-      new MutationObserver(updatePaybar).observe(lblTotalKasir, {childList:true, subtree:true, characterData:true});
-    }
-    const cart = document.getElementById('cart-list');
-    if (cart) new MutationObserver(updatePaybar).observe(cart, {childList:true, subtree:true});
-
-    window.addEventListener('DOMContentLoaded', updatePaybar);
-    window.addEventListener('load', updatePaybar);
-
-    // expose untuk dipanggil dari app.js
-    window.__updatePaybar = updatePaybar;
-  })();
-
-  // Service Worker (auto-update + auto-reload sekali)
-  if ('serviceWorker' in navigator) {
-    (async () => {
-      try {
-        const reg = await navigator.serviceWorker.register('/sw.js.php', { scope: '/' });
-        reg.update();
-        setInterval(() => reg.update(), 30000);
-        let reloaded = false;
-        navigator.serviceWorker.addEventListener('controllerchange', () => {
-          if (reloaded) return; reloaded = true; location.reload();
-        });
-      } catch (err) {
-        console.warn('SW register failed:', err);
-      }
+    (function () {
+      const big = document.getElementById('total-big');
+      const small = document.getElementById('total');
+      const mo = new MutationObserver(() => big && small && (big.textContent = small.textContent));
+      if (small) mo.observe(small, { childList: true, subtree: true, characterData: true });
+      // tombol bayar (desktop) memicu tombol bayar standar
+      const bd = document.getElementById('btn-checkout-desktop');
+      const bm = document.getElementById('btn-checkout');
+      bd && bm && bd.addEventListener('click', () => bm.click());
+      // shortcut: / untuk fokus search, Enter untuk bayar
+      document.addEventListener('keydown', (e) => {
+        if (e.key === '/' && !/input|textarea|select/i.test(e.target.tagName)) {
+          e.preventDefault(); document.getElementById('search')?.focus();
+        } else if (e.key === 'Enter' && !/input|textarea|select/i.test(e.target.tagName)) {
+          document.getElementById('btn-checkout')?.click();
+        }
+      });
     })();
-  }
+  </script>
+
+  <!-- Service Worker tetap -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      (async () => {
+        try {
+          const reg = await navigator.serviceWorker.register('/sw.js.php', { scope: '/' });
+          reg.update(); setInterval(() => reg.update(), 30000);
+          let reloaded = false;
+          navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (reloaded) return; reloaded = true; location.reload();
+          });
+        } catch (err) {
+          console.warn('SW register failed:', err);
+        }
+      })();
+    }
   </script>
 </body>
 </html>
