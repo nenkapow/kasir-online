@@ -17,10 +17,6 @@
 
 <main class="container py-3">
   <div class="row g-2">
-    <div class="col-12 col-md-4">
-      <label class="form-label">PIN Aplikasi</label>
-      <input type="password" id="pin" class="form-control" placeholder="PIN (default 1234)">
-    </div>
     <div class="col-6 col-md-4">
       <label class="form-label">Dari</label>
       <input type="date" id="start" class="form-control">
@@ -39,7 +35,7 @@
   <h5>Ringkasan Harian</h5>
   <div class="table-responsive">
     <table class="table table-sm table-striped">
-      <thead><tr><th>Tanggal</th><th>Transaksi</th><th>Omzet (Rp)</th></tr></thead>
+      <thead><tr><th>Tanggal</th><th>Transaksi</th><th class="text-end">Omzet (Rp)</th></tr></thead>
       <tbody id="summary-body"></tbody>
     </table>
   </div>
@@ -47,7 +43,7 @@
   <h5 class="mt-4">Produk Terlaris</h5>
   <div class="table-responsive">
     <table class="table table-sm table-striped">
-      <thead><tr><th>Produk</th><th>Qty</th><th>Penjualan (Rp)</th></tr></thead>
+      <thead><tr><th>Produk</th><th>Qty</th><th class="text-end">Penjualan (Rp)</th></tr></thead>
       <tbody id="top-body"></tbody>
     </table>
   </div>
