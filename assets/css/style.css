@@ -31,3 +31,26 @@ body { -webkit-tap-highlight-color: transparent; }
 body.has-paybar-padding{
   padding-bottom: 84px; /* tinggi bar approx */
 }
+
+/* Search bar lengket di bawah navbar */
+.sticky-search {
+  position: sticky;
+  top: 56px;               /* tinggi navbar Bootstrap */
+  z-index: 1030;
+  background: #fff;
+  padding-top: .5rem;
+  padding-bottom: .5rem;
+  border-bottom: 1px solid #eee;
+}
+
+/* Mode Kasir Cepat: sembunyikan form kelola + tombol Edit/Hapus */
+body.fast-mode .card.manage-products { display: none !important; }
+body.fast-mode .btn-edit,
+body.fast-mode .btn-delete { display: none !important; }
+
+/* Perbesar target tombol tambah biar enak di-HP */
+.btn-add {
+  padding: .35rem .75rem;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
