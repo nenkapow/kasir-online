@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Kasir Online - Pembelian</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <style>
+    .cell-sm { width: 120px; }
+    .cell-md { width: 180px; }
+    .text-muted-mini { font-size:.8rem; }
+    .readonly { background:#f8f9fa; }
+    .pick { position: relative; }
+    .pick .list-group { position:absolute; z-index:20; width:100%; max-height:220px; overflow:auto; }
+    .pick .list-group-item { cursor:pointer; }
+  </style>
 </head>
 <body class="bg-light">
 <nav class="navbar navbar-dark bg-primary">
@@ -18,7 +27,7 @@
   <div class="card shadow-sm">
     <div class="card-header fw-bold">Input Pembelian</div>
     <div class="card-body">
-      <form id="formPembelian">
+      <form id="formPembelian" autocomplete="off">
         <div class="row mb-3">
           <div class="col-md-4">
             <label class="form-label">Supplier</label>
@@ -34,12 +43,12 @@
           <table class="table table-sm table-bordered align-middle text-center" id="tblItems">
             <thead class="table-light">
               <tr>
-                <th>SKU</th>
-                <th>Nama Produk</th>
-                <th>Qty</th>
-                <th>Harga</th>
-                <th>Subtotal</th>
-                <th></th>
+                <th class="cell-sm">SKU</th>
+                <th>Nama Produk <small class="text-muted">(tampilkan HJ aktif di bawah)</small></th>
+                <th class="cell-sm">Qty</th>
+                <th class="cell-md">Harga (Beli)</th>
+                <th class="cell-md">Subtotal</th>
+                <th class="cell-sm"></th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -69,64 +78,164 @@ const tbody = document.querySelector('#tblItems tbody');
 const btnAdd = document.getElementById('btnAdd');
 const totalText = document.getElementById('totalText');
 
-function formatRupiah(n) {
-  return 'Rp ' + n.toLocaleString('id-ID');
+const rupiah = n => 'Rp ' + Number(n||0).toLocaleString('id-ID');
+
+// cache pencarian produk per query biar hemat request
+const productCache = new Map(); // key: q, val: array rows
+function searchProducts(q){
+  q = (q||'').trim();
+  if(productCache.has(q)) return Promise.resolve(productCache.get(q));
+  return fetch('api/products.php?q='+encodeURIComponent(q))
+    .then(r=>r.json())
+    .then(j=>{
+      if(!j.ok) throw new Error(j.error||'Gagal ambil produk');
+      productCache.set(q, j.data||[]);
+      return j.data||[];
+    });
 }
 
-btnAdd.addEventListener('click', () => {
+function makeRow(){
   const tr = document.createElement('tr');
   tr.innerHTML = `
-    <td><input class='form-control form-control-sm sku' placeholder='SKU'></td>
-    <td><input class='form-control form-control-sm name' placeholder='Nama'></td>
-    <td><input type='number' min='1' class='form-control form-control-sm qty' value='1'></td>
-    <td><input type='number' min='0' class='form-control form-control-sm price' value='0'></td>
-    <td class='subtotal'>Rp 0</td>
-    <td><button type='button' class='btn btn-danger btn-sm btnDel'>&times;</button></td>
+    <td>
+      <input class="form-control form-control-sm sku readonly" readonly placeholder="SKU">
+    </td>
+    <td>
+      <div class="pick">
+        <input class="form-control form-control-sm pick-input" placeholder="Ketik SKU / nama untuk pilih produk">
+        <div class="list-group d-none pick-list"></div>
+      </div>
+      <div class="text-start text-muted-mini mt-1 name-info"></div>
+    </td>
+    <td>
+      <input type="number" min="1" class="form-control form-control-sm qty" value="1">
+    </td>
+    <td>
+      <input type="number" min="0" step="1" class="form-control form-control-sm price" value="0">
+    </td>
+    <td class="subtotal text-end">Rp 0</td>
+    <td><button type="button" class="btn btn-danger btn-sm btnDel">&times;</button></td>
   `;
-  tbody.appendChild(tr);
+  attachRowEvents(tr);
+  return tr;
+}
+
+btnAdd.addEventListener('click', ()=> {
+  tbody.appendChild(makeRow());
   updateTotal();
 });
 
-tbody.addEventListener('input', e => {
-  if (e.target.classList.contains('qty') || e.target.classList.contains('price')) {
-    const tr = e.target.closest('tr');
-    const qty = parseFloat(tr.querySelector('.qty').value) || 0;
-    const price = parseFloat(tr.querySelector('.price').value) || 0;
-    const subtotal = qty * price;
-    tr.querySelector('.subtotal').textContent = formatRupiah(subtotal);
-    updateTotal();
-  }
-});
+// delegasi event
+function attachRowEvents(tr){
+  const pickInput = tr.querySelector('.pick-input');
+  const pickList  = tr.querySelector('.pick-list');
+  const skuEl     = tr.querySelector('.sku');
+  const nameInfo  = tr.querySelector('.name-info');
+  const qtyEl     = tr.querySelector('.qty');
+  const priceEl   = tr.querySelector('.price');
 
-tbody.addEventListener('click', e => {
-  if (e.target.classList.contains('btnDel')) {
-    e.target.closest('tr').remove();
-    updateTotal();
-  }
-});
-
-function updateTotal() {
-  let total = 0;
-  tbody.querySelectorAll('tr').forEach(tr => {
-    const qty = parseFloat(tr.querySelector('.qty').value) || 0;
-    const price = parseFloat(tr.querySelector('.price').value) || 0;
-    total += qty * price;
+  let timer=null;
+  pickInput.addEventListener('input', e=>{
+    const q = e.target.value;
+    clearTimeout(timer);
+    if(!q){ pickList.innerHTML=''; pickList.classList.add('d-none'); return; }
+    timer=setTimeout(async ()=>{
+      try{
+        const rows = await searchProducts(q);
+        if(!rows.length){ pickList.classList.add('d-none'); pickList.innerHTML=''; return; }
+        pickList.innerHTML = rows.map(r=>`
+          <button type="button" class="list-group-item list-group-item-action" 
+                  data-sku="${r.sku}" data-name="${r.name}" data-cost="${r.cost_price}" data-sell="${r.sell_price}">
+            <div class="d-flex justify-content-between">
+              <span><strong>${r.sku}</strong> — ${r.name}</span>
+              <small class="text-muted">HJ: ${rupiah(r.sell_price)} • Stok ${r.stock}</small>
+            </div>
+          </button>
+        `).join('');
+        pickList.classList.remove('d-none');
+      }catch(err){
+        console.warn(err);
+      }
+    }, 250);
   });
-  totalText.textContent = formatRupiah(total);
+
+  pickList.addEventListener('click', e=>{
+    const btn = e.target.closest('button[list-group-item]');
+  });
+
+  // pilih dari list
+  pickList.addEventListener('click', (e)=>{
+    const it = e.target.closest('button.list-group-item');
+    if(!it) return;
+    const sku  = it.dataset.sku;
+    const name = it.dataset.name;
+    const cost = Number(it.dataset.cost||0);
+    const sell = Number(it.dataset.sell||0);
+
+    skuEl.value = sku;
+    pickInput.value = name;
+    pickInput.classList.add('readonly');
+    pickInput.readOnly = true;
+
+    // default harga beli = cost terakhir (boleh diubah)
+    priceEl.value = cost;
+    nameInfo.textContent = `Harga Jual (aktif): ${rupiah(sell)}`;
+
+    pickList.classList.add('d-none'); pickList.innerHTML='';
+    recalcRow(tr);
+    updateTotal();
+  });
+
+  // qty / price berubah -> subtotal
+  [qtyEl, priceEl].forEach(el=>{
+    el.addEventListener('input', ()=>{
+      recalcRow(tr);
+      updateTotal();
+    });
+  });
+
+  // hapus baris
+  tr.querySelector('.btnDel').addEventListener('click', ()=>{
+    tr.remove();
+    updateTotal();
+  });
+
+  // klik di luar -> tutup dropdown
+  document.addEventListener('click', (ev)=>{
+    if(!tr.contains(ev.target)){
+      pickList.classList.add('d-none');
+    }
+  });
 }
 
+function recalcRow(tr){
+  const qty = Number(tr.querySelector('.qty').value||0);
+  const price = Number(tr.querySelector('.price').value||0);
+  tr.querySelector('.subtotal').textContent = rupiah(qty*price);
+}
+
+function updateTotal(){
+  let total = 0;
+  tbody.querySelectorAll('tr').forEach(tr=>{
+    const qty = Number(tr.querySelector('.qty').value||0);
+    const price = Number(tr.querySelector('.price').value||0);
+    total += qty*price;
+  });
+  totalText.textContent = rupiah(total);
+}
+
+// submit
 document.getElementById('formPembelian').addEventListener('submit', async e => {
   e.preventDefault();
   const items = [];
   tbody.querySelectorAll('tr').forEach(tr => {
-    const sku = tr.querySelector('.sku').value.trim();
-    const name = tr.querySelector('.name').value.trim();
-    const qty = parseFloat(tr.querySelector('.qty').value);
-    const price = parseFloat(tr.querySelector('.price').value);
-    if (sku && qty > 0) items.push({ sku, name, qty, price });
+    const sku   = tr.querySelector('.sku').value.trim();
+    const name  = tr.querySelector('.pick-input').value.trim();
+    const qty   = Number(tr.querySelector('.qty').value||0);
+    const price = Number(tr.querySelector('.price').value||0);
+    if (sku && qty>0) items.push({ sku, name, qty, price });
   });
-
-  if (!items.length) return alert('Tambahkan minimal 1 item');
+  if (!items.length) return alert('Tambahkan minimal 1 item dan pilih produk dari daftar.');
 
   const data = {
     supplier_name: e.target.supplier_name.value.trim(),
@@ -134,38 +243,41 @@ document.getElementById('formPembelian').addEventListener('submit', async e => {
     items
   };
 
-  const res = await fetch('api/purchase_create.php', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data)
-  });
-  const json = await res.json();
-
-  if (json.ok) {
+  try{
+    const res = await fetch('api/purchase_create.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    const json = await res.json();
+    if(!json.ok) throw new Error(json.error||'Gagal simpan');
     alert('Pembelian tersimpan!');
-    tbody.innerHTML = '';
-    updateTotal();
+    tbody.innerHTML=''; updateTotal();
     loadRiwayat();
-  } else {
-    alert('Gagal: ' + json.error);
+  }catch(err){
+    alert('Gagal: '+err.message);
   }
 });
 
-async function loadRiwayat() {
-  const res = await fetch('api/purchase_list.php');
-  const j = await res.json();
-  const div = document.getElementById('riwayat');
-  if (!j.ok) return div.textContent = 'Gagal memuat data.';
-
-  let html = '<table class="table table-sm table-striped"><thead><tr><th>Invoice</th><th>Supplier</th><th>Total</th><th>Tanggal</th></tr></thead><tbody>';
-  j.data.forEach(r => {
-    html += `<tr><td>${r.invoice_code}</td><td>${r.supplier_name||'-'}</td><td>${formatRupiah(parseFloat(r.total))}</td><td>${r.created_at_wib}</td></tr>`;
-  });
-  html += '</tbody></table>';
-  div.innerHTML = html;
+// riwayat
+async function loadRiwayat(){
+  try{
+    const res = await fetch('api/purchase_list.php');
+    const j = await res.json();
+    const div = document.getElementById('riwayat');
+    if(!j.ok){ div.textContent='Gagal memuat data.'; return; }
+    let html = '<table class="table table-sm table-striped"><thead><tr><th>Invoice</th><th>Supplier</th><th>Total</th><th>Tanggal</th></tr></thead><tbody>';
+    j.data.forEach(r=>{
+      html += `<tr><td>${r.invoice_code}</td><td>${r.supplier_name||'-'}</td><td>${rupiah(Number(r.total))}</td><td>${r.created_at_wib}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    div.innerHTML = html;
+  }catch(err){}
 }
-
 loadRiwayat();
+
+// mulai dengan 1 baris kosong
+btnAdd.click();
 </script>
 </body>
 </html>
