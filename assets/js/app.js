@@ -1,4 +1,4 @@
-// ===================== Kasir klasik – app.js =====================
+// ===================== Kasir klasik – app.js (with Product Manager) =====================
 
 const $ = (q) => document.querySelector(q);
 const rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
@@ -22,6 +22,19 @@ const els = {
   mbBar: $('#mobile-bar'),
   mbTotal: $('#mb-total'),
   mbPay: $('#mb-pay'),
+
+  // product manager
+  openProdBtn: $('#btn-open-products'),
+  prodModal: $('#productModal'),
+  prodForm: $('#prod-form'),
+  prodId: $('#prod-id'),
+  prodSku: $('#prod-sku'),
+  prodName: $('#prod-name'),
+  prodPrice: $('#prod-price'),
+  prodStock: $('#prod-stock'),
+  prodReset: $('#prod-reset'),
+  prodSearch: $('#prod-search'),
+  prodRows: $('#prod-rows'),
 };
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -30,6 +43,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   loadProducts();
 
+  // kasir
   els.search.addEventListener('input', onSearchInput);
   els.search.addEventListener('keydown', onSearchKey);
   els.suggest.addEventListener('click', onSuggestClick);
@@ -46,8 +60,14 @@ window.addEventListener('DOMContentLoaded', () => {
     if (e.key.toLowerCase() === 'b' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); checkout(); }
   });
 
-  // fokus ke search setiap load
-  setTimeout(()=>els.search.focus(), 200);
+  // manager produk
+  els.openProdBtn?.addEventListener('click', openProductModal);
+  els.prodForm?.addEventListener('submit', onProdSave);
+  els.prodReset?.addEventListener('click', resetProdForm);
+  els.prodSearch?.addEventListener('input', renderProductRows);
+
+  // fokus awal
+  setTimeout(()=>els.search?.focus(), 200);
 });
 
 // ---------- Data ----------
@@ -57,6 +77,8 @@ async function loadProducts(){
     const j = await r.json();
     if(!j.ok) throw new Error(j.error||'Gagal ambil produk');
     PRODUCTS = j.data || [];
+    // refresh tampilan manager jika terbuka
+    renderProductRows();
   }catch(e){ alert('Gagal memuat produk'); }
 }
 
@@ -122,7 +144,6 @@ function addFromBar(){
 
   if(!q) return;
 
-  // Cari SKU persis dulu → baru nama
   let p = PRODUCTS.find(x => (x.sku||'').toLowerCase() === q);
   if(!p) p = PRODUCTS.find(x => (x.name||'').toLowerCase().includes(q));
   if(!p){ beep(); return; }
@@ -138,7 +159,6 @@ function addById(id){
 }
 
 function addProduct(p, qty){
-  // cek stok jika ada
   if (typeof p.stock === 'number'){
     const inCart = CART.find(x => x.id===p.id)?.qty || 0;
     if(inCart + qty > p.stock){
@@ -217,7 +237,6 @@ function changeQty(id, d){
   if(!it) return;
   const after = it.qty + d;
   if(after < 1) return;
-  // stok
   if(typeof it.stock==='number' && after>it.stock){
     alert('Stok tidak cukup'); return;
   }
@@ -242,7 +261,6 @@ function updateChange(){
   const pay = Number(els.pay.value||0);
   const chg = Math.max(0, pay - total());
   els.change.value = rupiah(chg);
-  // mobile bar show/hide
   els.mbBar.style.display = total()>0 ? 'flex' : 'none';
 }
 
@@ -253,7 +271,6 @@ async function checkout(){
   const pay = Number(els.pay.value||0);
   if(pay < t && els.method.value==='cash'){ alert('Nominal bayar kurang.'); return; }
 
-  // siapkan payload (kedua kunci id & product_id untuk kompatibilitas)
   const items = CART.map(i=>({
     id: Number(i.id),
     product_id: Number(i.id),
@@ -280,13 +297,143 @@ async function checkout(){
 
     alert('Transaksi sukses!');
     CART = []; renderLines(); clearBar(); els.pay.value = ''; els.change.value = 'Rp 0';
-    // refresh stok list
     await loadProducts();
   }catch(e){
     alert(e.message || 'Gagal melakukan checkout.');
   }finally{
     btns.forEach(b=>{ b.disabled=false; b.textContent='Bayar'; });
   }
+}
+
+// ---------- PRODUCT MANAGER ----------
+let prodModalInst = null;
+
+function openProductModal(){
+  resetProdForm();
+  renderProductRows();
+  prodModalInst = bootstrap.Modal.getOrCreateInstance(els.prodModal);
+  prodModalInst.show();
+}
+
+function resetProdForm(){
+  els.prodForm?.reset();
+  els.prodId.value = '';
+  els.prodPrice.value = 0;
+  els.prodStock.value = 0;
+}
+
+function renderProductRows(){
+  if(!els.prodRows) return;
+  const q = (els.prodSearch?.value || '').toLowerCase();
+  const list = !q ? PRODUCTS : PRODUCTS.filter(p =>
+    (p.name||'').toLowerCase().includes(q) || (p.sku||'').toLowerCase().includes(q)
+  );
+
+  els.prodRows.innerHTML = list.map(p=>`
+    <tr>
+      <td class="text-monospace">${p.sku||'-'}</td>
+      <td>${p.name||'-'}</td>
+      <td class="text-end">${rupiah(p.price||0)}</td>
+      <td class="text-center">
+        <div class="btn-group">
+          <button class="btn btn-outline-secondary btn-icon-sm" data-act="stok-" data-id="${p.id}">-</button>
+          <span class="px-2">${p.stock ?? 0}</span>
+          <button class="btn btn-outline-secondary btn-icon-sm" data-act="stok+" data-id="${p.id}">+</button>
+        </div>
+      </td>
+      <td class="text-end">
+        <div class="btn-group btn-group-sm">
+          <button class="btn btn-outline-primary" data-act="edit" data-id="${p.id}">Edit</button>
+          <button class="btn btn-outline-danger" data-act="del" data-id="${p.id}">Hapus</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+
+  // delegasi klik
+  els.prodRows.querySelectorAll('button[data-act]').forEach(btn=>{
+    const id = btn.dataset.id;
+    const act = btn.dataset.act;
+    btn.onclick = () => {
+      if(act==='edit') fillProdForm(id);
+      else if(act==='del') deleteProduct(id);
+      else if(act==='stok+' || act==='stok-') adjustStock(id, act==='stok+'? +1 : -1);
+    };
+  });
+}
+
+function fillProdForm(id){
+  const p = PRODUCTS.find(x=>String(x.id)===String(id));
+  if(!p) return;
+  els.prodId.value = p.id;
+  els.prodSku.value = p.sku || '';
+  els.prodName.value = p.name || '';
+  els.prodPrice.value = p.price || 0;
+  els.prodStock.value = p.stock || 0;
+}
+
+async function onProdSave(e){
+  e.preventDefault();
+  const id = els.prodId.value.trim();
+  const sku = els.prodSku.value.trim();
+  const name = els.prodName.value.trim();
+  const price = Number(els.prodPrice.value||0);
+  const stock = Number(els.prodStock.value||0);
+  if(!sku || !name) return alert('SKU & Nama wajib diisi');
+
+  const fd = new FormData();
+  if(id) fd.append('id', id);
+  fd.append('sku', sku);
+  fd.append('name', name);
+  fd.append('price', String(price));
+  fd.append('stock', String(stock));
+
+  try{
+    const r = await fetch('/api/product_save.php', { method:'POST', body: fd });
+    const j = await r.json();
+    if(!j.ok) throw new Error(j.error || 'Gagal simpan');
+    await loadProducts();
+    renderProductRows();
+    resetProdForm();
+  }catch(err){
+    alert(err.message || 'Gagal menyimpan produk');
+  }
+}
+
+async function deleteProduct(id){
+  const p = PRODUCTS.find(x=>String(x.id)===String(id));
+  if(!p) return;
+  if(!confirm(`Hapus produk "${p.name}"?`)) return;
+  const fd = new FormData();
+  fd.append('id', id);
+  try{
+    const r = await fetch('/api/product_delete.php', { method:'POST', body: fd });
+    const j = await r.json();
+    if(!j.ok) throw new Error(j.error || 'Gagal hapus');
+    await loadProducts();
+    renderProductRows();
+  }catch(err){ alert(err.message || 'Gagal menghapus'); }
+}
+
+async function adjustStock(id, delta){
+  const p = PRODUCTS.find(x=>String(x.id)===String(id));
+  if(!p) return;
+  const newStock = Math.max(0, (p.stock||0) + delta);
+
+  const fd = new FormData();
+  fd.append('id', id);
+  fd.append('sku', p.sku || '');
+  fd.append('name', p.name || '');
+  fd.append('price', String(p.price || 0));
+  fd.append('stock', String(newStock));
+
+  try{
+    const r = await fetch('/api/product_save.php', { method:'POST', body: fd });
+    const j = await r.json();
+    if(!j.ok) throw new Error(j.error || 'Gagal update stok');
+    await loadProducts();
+    renderProductRows();
+  }catch(err){ alert(err.message || 'Gagal update stok'); }
 }
 
 // ---------- misc ----------
