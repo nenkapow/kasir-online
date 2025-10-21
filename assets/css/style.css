@@ -5,3 +5,29 @@ body { -webkit-tap-highlight-color: transparent; }
 .price { font-weight:600; }
 #lg .list-group-item { padding-top: .5rem; padding-bottom: .5rem; }
 #lg .fw-semibold { font-weight: 600; }
+
+/* === Sticky Pay Bar === */
+.paybar-fixed{
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: .75rem;
+  background: #ffffff;
+  border-top: 1px solid #e5e7eb;
+  padding: .6rem .9rem calc(.6rem + env(safe-area-inset-bottom));
+  box-shadow: 0 -6px 24px rgba(0,0,0,.06);
+  transform: translateY(100%);
+  transition: transform .25s ease;
+  z-index: 1040; /* di atas konten, di bawah modal Bootstrap (1050) */
+}
+.paybar-fixed.show{ transform: translateY(0); }
+.paybar-fixed .paybar-info{
+  font-size: 1rem; color: #111827;
+}
+@media (min-width: 992px){
+  .paybar-fixed{ max-width: 720px; margin: 0 auto; left: 0; right: 0; }
+}
+/* beri ruang bawah saat bar muncul agar konten tidak ketutup */
+body.has-paybar-padding{
+  padding-bottom: 84px; /* tinggi bar approx */
+}
