@@ -20,6 +20,7 @@
   <div class="container-fluid">
     <span class="navbar-brand">Kasir</span>
     <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-light" href="purchases.html">Pembelian</a>
       <button id="btn-open-products" class="btn btn-sm btn-outline-light">Kelola Produk</button>
       <a class="btn btn-sm btn-light" href="report.html">Laporan</a>
     </div>
@@ -38,7 +39,6 @@
     <div class="col-12 col-md-8">
       <label class="form-label mb-1">Scan / Cari Produk (SKU atau Nama)</label>
       <input id="search" class="form-control form-control-lg" placeholder="Contoh: RK0001 / Indomie…" autocomplete="off">
-      <!-- suggestions -->
       <div id="suggest" class="list-group shadow-sm mt-1 d-none"></div>
     </div>
     <div class="col-6 col-md-2">
@@ -100,7 +100,7 @@
   </div>
 </main>
 
-<!-- ================= MODAL KELOLA PRODUK ================= -->
+<!-- ================ MODAL KELOLA PRODUK ================ -->
 <div class="modal fade" id="productModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
@@ -109,8 +109,6 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
       </div>
       <div class="modal-body">
-
-        <!-- Form produk -->
         <form id="prod-form" class="row g-2 mb-3">
           <input type="hidden" id="prod-id">
           <div class="col-6 col-md-3">
@@ -135,7 +133,6 @@
           </div>
         </form>
 
-        <!-- Pencarian & tabel -->
         <div class="input-group mb-2">
           <span class="input-group-text">Cari</span>
           <input id="prod-search" class="form-control" placeholder="Nama / SKU…">
@@ -155,12 +152,11 @@
             <tbody id="prod-rows"></tbody>
           </table>
         </div>
-
       </div>
     </div>
   </div>
 </div>
-<!-- =============== /MODAL KELOLA PRODUK ================= -->
+<!-- ================= /MODAL KELOLA PRODUK ================= -->
 
 <!-- JS -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" defer></script>
