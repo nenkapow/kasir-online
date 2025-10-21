@@ -108,3 +108,25 @@ body.fast-mode .btn-delete { display: none !important; }
   padding:10px 12px;
 }
 #lg .btn-group .btn { min-width:58px; }
+
+/* Kasir klasik - ringkas & responsif */
+.total-box { background:#fff; border:1px solid #e5e7eb; }
+
+/* suggestions dropdown */
+#suggest { max-height: 260px; overflow:auto; position:relative; z-index: 20; }
+#suggest .list-group-item { cursor:pointer; }
+#suggest .active { background:#0d6efd; color:#fff; }
+
+/* tabel qty control */
+.qty-group { display:inline-flex; align-items:center; gap:.35rem; }
+.qty-group .btn { padding:.15rem .45rem; }
+
+/* mobile bottom bar */
+.mobile-bar{
+  position:fixed; left:0; right:0; bottom:0;
+  display:flex; align-items:center; gap:12px;
+  padding:.6rem .9rem; background:#ffffffd9; backdrop-filter: blur(8px);
+  border-top:1px solid #e5e7eb;
+}
+@media (min-width:768px){ .mobile-bar{ display:none; } }
+body { padding-bottom:72px; } /* ruang untuk bar HP */
