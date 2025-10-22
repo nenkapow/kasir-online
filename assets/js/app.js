@@ -1,10 +1,10 @@
-// ===================== Kasir klasik – app.js (Product Manager + Barcode Scanner) =====================
+// ===================== Kasir klasik – app.js (Product Manager + Barcode Scanner + Barcode field) =====================
 
 const $ = (q) => document.querySelector(q);
 const rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 
 let PRODUCTS = [];
-let CART = []; // {id, sku, name, price(sell), stock, cost_price, qty}
+let CART = []; // {id, sku, name, price(sell), stock, cost_price, barcode, qty}
 
 const els = {
   search: $('#search'),
@@ -30,14 +30,17 @@ const els = {
   prodId: $('#prod-id'),
   prodSku: $('#prod-sku'),
   prodName: $('#prod-name'),
-  prodPrice: $('#prod-price'),   // HARGA JUAL
-  prodCost: $('#prod-cost'),     // MODAL (read-only)
-  prodStock: $('#prod-stock'),   // tampil saja (disabled)
+  prodPrice: $('#prod-price'),   // SELL
+  prodCost: $('#prod-cost'),     // modal/read-only
+  prodStock: $('#prod-stock'),   // read-only
+  prodBarcode: $('#prod-barcode'),
   prodReset: $('#prod-reset'),
   prodSearch: $('#prod-search'),
   prodRows: $('#prod-rows'),
+  genSkuBtn: $('#btn-gen-sku'),
+  scanBarcodeBtn: $('#btn-scan-barcode'),
 
-  // scanner
+  // scanner reusable
   scanBtn: $('#scan-btn'),
   scanModal: $('#scanModal'),
   scanVideo: $('#scanVideo'),
@@ -74,6 +77,10 @@ window.addEventListener('DOMContentLoaded', () => {
   els.prodForm?.addEventListener('submit', onProdSave);
   els.prodReset?.addEventListener('click', resetProdForm);
   els.prodSearch?.addEventListener('input', renderProductRows);
+  els.genSkuBtn?.addEventListener('click', () => {
+    const sku = generateSKU(els.prodName.value || '');
+    if (sku) els.prodSku.value = sku;
+  });
 
   // scanner
   setupScanner();
@@ -96,6 +103,7 @@ async function loadProducts(){
       sell_price: Number(p.sell_price || 0),
       cost_price: Number(p.cost_price || 0),
       stock: Number(p.stock || 0),
+      barcode: p.barcode || null,
     }));
 
     renderProductRows(); // refresh modal list
@@ -110,8 +118,13 @@ function onSearchInput(){
   selIndex = -1;
   if(!q){ els.suggest.classList.add('d-none'); els.suggest.innerHTML=''; return; }
 
+  // filter by name/sku/startsWith barcode
   const list = PRODUCTS
-    .filter(p => (p.sku||'').toLowerCase().includes(q) || (p.name||'').toLowerCase().includes(q))
+    .filter(p =>
+      (p.sku||'').toLowerCase().includes(q) ||
+      (p.name||'').toLowerCase().includes(q) ||
+      (p.barcode||'').toLowerCase().startsWith(q)
+    )
     .slice(0, 12);
 
   if(!list.length){ els.suggest.classList.add('d-none'); els.suggest.innerHTML=''; return; }
@@ -121,12 +134,12 @@ function onSearchInput(){
       <div class="d-flex justify-content-between">
         <div class="text-truncate me-3">
           <strong>${p.name}</strong>
-          <div class="small text-muted">${p.sku} • Stok ${p.stock}</div>
+          <div class="small text-muted">${p.sku} • Stok ${p.stock}${p.barcode ? ' • ' + p.barcode : ''}</div>
         </div>
         <div class="text-end fw-semibold">${rupiah(p.price)}</div>
       </div>
     </button>
-  ).trim()`).join('');
+  `).join('');
   els.suggest.classList.remove('d-none');
 }
 
@@ -162,11 +175,16 @@ function onSuggestClick(e){
 
 // ---------- Cart ops ----------
 function addFromBar(){
-  const q = (els.search.value||'').trim().toLowerCase();
-  const qty = Math.max(1, parseInt(els.qty?.value||'1',10));
+  const qRaw = (els.search.value||'').trim();
+  const q = qRaw.toLowerCase();
+  const qty = Math.max(1, parseInt(els.qty.value||'1',10));
   if(!q) return;
 
-  let p = PRODUCTS.find(x => (x.sku||'').toLowerCase() === q);
+  // 1) by exact barcode
+  let p = PRODUCTS.find(x => (x.barcode||'').toLowerCase() === q);
+  // 2) by exact SKU
+  if(!p) p = PRODUCTS.find(x => (x.sku||'').toLowerCase() === q);
+  // 3) by name includes
   if(!p) p = PRODUCTS.find(x => (x.name||'').toLowerCase().includes(q));
   if(!p){ beep(); return; }
 
@@ -176,7 +194,7 @@ function addFromBar(){
 function addById(id){
   const p = PRODUCTS.find(x => String(x.id)===String(id));
   if(!p){ beep(); return; }
-  const qty = Math.max(1, parseInt(els.qty?.value||'1',10));
+  const qty = Math.max(1, parseInt(els.qty.value||'1',10));
   addProduct(p, qty);
 }
 
@@ -195,12 +213,10 @@ function addProduct(p, qty){
 }
 
 function clearBar(){
-  if (!els.search) return;
   els.search.value = '';
-  els.suggest?.classList.add('d-none'); 
-  if (els.suggest) els.suggest.innerHTML='';
-  if (els.qty) els.qty.value = '1';
-  setTimeout(()=>els.search?.focus(), 50);
+  els.suggest.classList.add('d-none'); els.suggest.innerHTML='';
+  els.qty.value = '1';
+  setTimeout(()=>els.search.focus(), 50);
 }
 
 function clearAll(){
@@ -212,7 +228,6 @@ function clearAll(){
 }
 
 function renderLines(){
-  if (!els.lines) return;
   els.lines.innerHTML = '';
   let total = 0;
 
@@ -252,8 +267,8 @@ function renderLines(){
     });
   }
 
-  if (els.totalBig) els.totalBig.textContent = rupiah(total);
-  if (els.mbTotal)  els.mbTotal.textContent  = rupiah(total);
+  els.totalBig.textContent = rupiah(total);
+  els.mbTotal.textContent = rupiah(total);
   updateChange();
 }
 
@@ -283,18 +298,18 @@ function total(){
 }
 
 function updateChange(){
-  const pay = Number(els.pay?.value||0);
+  const pay = Number(els.pay.value||0);
   const chg = Math.max(0, pay - total());
-  if (els.change) els.change.value = rupiah(chg);
-  if (els.mbBar) els.mbBar.style.display = total()>0 ? 'flex' : 'none';
+  els.change.value = rupiah(chg);
+  els.mbBar.style.display = total()>0 ? 'flex' : 'none';
 }
 
 // ---------- Checkout ----------
 async function checkout(){
   if(!CART.length){ alert('Belum ada item.'); return; }
   const t = total();
-  const pay = Number(els.pay?.value||0);
-  if(pay < t && els.method?.value==='cash'){ alert('Nominal bayar kurang.'); return; }
+  const pay = Number(els.pay.value||0);
+  if(pay < t && els.method.value==='cash'){ alert('Nominal bayar kurang.'); return; }
 
   const items = CART.map(i=>({
     id: Number(i.id),
@@ -305,13 +320,13 @@ async function checkout(){
   }));
 
   const fd = new FormData();
-  fd.append('method', els.method?.value || 'cash');
-  fd.append('note', (els.note?.value||'').toString());
+  fd.append('method', els.method.value || 'cash');
+  fd.append('note', (els.note.value||'').toString());
   fd.append('amount_paid', String(pay));
   fd.append('total', String(t));
   fd.append('items', JSON.stringify(items));
 
-  const btns = [els.payBtn, els.mbPay].filter(Boolean);
+  const btns = [els.payBtn, els.mbPay];
   btns.forEach(b=>{ b.disabled=true; b.textContent='Memproses…'; });
 
   try{
@@ -321,7 +336,7 @@ async function checkout(){
     if(!res.ok || !data?.ok) throw new Error(data?.error || 'Checkout gagal');
 
     alert('Transaksi sukses!');
-    CART = []; renderLines(); clearBar(); if (els.pay) els.pay.value = ''; if (els.change) els.change.value = 'Rp 0';
+    CART = []; renderLines(); clearBar(); els.pay.value = ''; els.change.value = 'Rp 0';
     await loadProducts();
   }catch(e){
     alert(e.message || 'Gagal melakukan checkout.');
@@ -336,31 +351,32 @@ let prodModalInst = null;
 function openProductModal(){
   resetProdForm();
   renderProductRows();
-  if (els.prodModal) {
-    prodModalInst = bootstrap.Modal.getOrCreateInstance(els.prodModal);
-    prodModalInst.show();
-  }
+  prodModalInst = bootstrap.Modal.getOrCreateInstance(els.prodModal);
+  prodModalInst.show();
 }
 
 function resetProdForm(){
   els.prodForm?.reset();
-  if (els.prodId) els.prodId.value = '';
-  if (els.prodPrice) els.prodPrice.value = 0;
-  if (els.prodCost) els.prodCost.value = 0;
-  if (els.prodStock) els.prodStock.value = 0; // hanya tampil, tetap disabled
+  els.prodId.value = '';
+  els.prodPrice.value = 0;
+  els.prodCost.value = 0;
+  els.prodStock.value = 0; // hanya tampil
+  els.prodBarcode.value = '';
 }
 
 function renderProductRows(){
   if(!els.prodRows) return;
   const q = (els.prodSearch?.value || '').toLowerCase();
   const list = !q ? PRODUCTS : PRODUCTS.filter(p =>
-    (p.name||'').toLowerCase().includes(q) || (p.sku||'').toLowerCase().includes(q)
+    (p.name||'').toLowerCase().includes(q) ||
+    (p.sku||'').toLowerCase().includes(q) ||
+    (p.barcode||'').toLowerCase().includes(q)
   );
 
   els.prodRows.innerHTML = list.map(p=>`
     <tr>
       <td class="text-monospace">${p.sku||'-'}</td>
-      <td>${p.name||'-'}</td>
+      <td>${p.name||'-'}${p.barcode ? `<div class="small text-muted">${p.barcode}</div>`:''}</td>
       <td class="text-end">${rupiah(p.sell_price||p.price||0)}</td>
       <td class="text-end">${rupiah(p.cost_price||0)}</td>
       <td class="text-center">${p.stock ?? 0}</td>
@@ -387,28 +403,30 @@ function renderProductRows(){
 function fillProdForm(id){
   const p = PRODUCTS.find(x=>String(x.id)===String(id));
   if(!p) return;
-  if (els.prodId) els.prodId.value = p.id;
-  if (els.prodSku) els.prodSku.value = p.sku || '';
-  if (els.prodName) els.prodName.value = p.name || '';
-  if (els.prodPrice) els.prodPrice.value = Number(p.sell_price || p.price || 0);
-  if (els.prodCost)  els.prodCost.value  = Number(p.cost_price || 0);
-  if (els.prodStock) els.prodStock.value = Number(p.stock || 0);
+  els.prodId.value = p.id;
+  els.prodSku.value = p.sku || '';
+  els.prodName.value = p.name || '';
+  els.prodPrice.value = Number(p.sell_price || p.price || 0);
+  els.prodCost.value  = Number(p.cost_price || 0);
+  els.prodStock.value = Number(p.stock || 0);
+  els.prodBarcode.value = p.barcode || '';
 }
 
 async function onProdSave(e){
   e.preventDefault();
-  const id = (els.prodId?.value||'').trim();
-  const sku = (els.prodSku?.value||'').trim();
-  const name = (els.prodName?.value||'').trim();
-  const sellPrice = Number(els.prodPrice?.value||0);
+  const id = (els.prodId.value||'').trim();
+  const sku = (els.prodSku.value||'').trim();
+  const name = (els.prodName.value||'').trim();
+  const sellPrice = Number(els.prodPrice.value||0);
+  const barcode = (els.prodBarcode.value||'').trim();
   if(!sku || !name) return alert('SKU & Nama wajib diisi');
 
   const fd = new FormData();
   if(id) fd.append('id', id);
   fd.append('sku', sku);
   fd.append('name', name);
-  fd.append('sell_price', String(sellPrice)); // kirim SELL PRICE
-  // stok & cost_price TIDAK dikirim—stok via pembelian, modal dari pembelian
+  fd.append('sell_price', String(sellPrice)); // SELL PRICE
+  if(barcode) fd.append('barcode', barcode);  // BARCODE (unik, boleh kosong)
 
   try{
     const r = await fetch('/api/product_save.php', { method:'POST', body: fd });
@@ -437,13 +455,68 @@ async function deleteProduct(id){
   }catch(err){ alert(err.message || 'Gagal menghapus'); }
 }
 
-// ---------- Barcode Scanner ----------
+// ---------- SKU generator ----------
+function generateSKU(name){
+  // contoh: "Indomie Goreng Spesial" -> "IND-GRS-123"
+  const clean = (name || '').replace(/[^A-Za-z0-9\s]/g,' ').trim();
+  if(!clean) return '';
+  const words = clean.split(/\s+/);
+  const p1 = (words[0]||'').substring(0,3).toUpperCase();
+  const p2 = (words.slice(1).map(w=>w[0]).join('') || 'X').substring(0,3).toUpperCase();
+  // hindari tabrakan sederhana dengan 3 digit waktu
+  const p3 = String(Date.now()).slice(-3);
+  let sku = `${p1}-${p2}-${p3}`;
+  // pastikan tidak duplikat di memory (seadanya; validasi unik final di server)
+  if (PRODUCTS.some(p=>String(p.sku).toUpperCase()===sku)) {
+    sku = `${p1}-${p2}-${Math.floor(Math.random()*900+100)}`;
+  }
+  return sku;
+}
+
+// ---------- Barcode Scanner (reusable) ----------
 let scanModalInst = null;
 let codeReader = null;               // ZXing.BrowserMultiFormatReader
 let currentDeviceId = null;
 let torchOn = false;
-let scannedOnce = false;             // debouncer agar tidak dobel
 let activeStream = null;
+// target: 'pos' atau element input (barcode field)
+let scanTarget = 'pos';
+
+function setupScanner(){
+  if(els.scanBtn){
+    els.scanBtn.addEventListener('click', async ()=>{
+      scanTarget = 'pos';
+      openScanner();
+    });
+  }
+  if(els.scanBarcodeBtn){
+    els.scanBarcodeBtn.addEventListener('click', async ()=>{
+      scanTarget = els.prodBarcode; // element
+      openScanner();
+    });
+  }
+
+  els.scanModal?.addEventListener('hidden.bs.modal', stopScanner);
+  els.toggleCamera?.addEventListener('click', switchCamera);
+  els.toggleTorch?.addEventListener('click', toggleTorch);
+}
+
+async function openScanner(){
+  scanModalInst = bootstrap.Modal.getOrCreateInstance(els.scanModal);
+  scanModalInst.show();
+
+  try{
+    if (!isSecureContextOK()) {
+      els.scanStatus.textContent = 'Kamera hanya bisa diakses lewat HTTPS atau localhost.';
+      return;
+    }
+    els.scanStatus.textContent = 'Meminta izin kamera…';
+    await ensureCameraPermission();
+    await startScanner();
+  }catch(err){
+    els.scanStatus.textContent = 'Gagal akses kamera: ' + err.message;
+  }
+}
 
 // helper: cek secure context (HTTPS) & dukungan API
 function isSecureContextOK() {
@@ -455,7 +528,7 @@ function isSecureContextOK() {
 async function ensureCameraPermission() {
   try {
     const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-    tmp.getTracks().forEach(t => t.stop()); // tutup
+    tmp.getTracks().forEach(t => t.stop());
   } catch (err) {
     throw new Error('Izin kamera ditolak atau tidak tersedia');
   }
@@ -464,7 +537,7 @@ async function ensureCameraPermission() {
 // helper: ambil daftar kamera
 async function getVideoInputs() {
   if (!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices)) {
-    if (window.ZXing?.BrowserVideoReader?.listVideoInputDevices) {
+    if (window.ZXing && ZXing.BrowserVideoReader?.listVideoInputDevices) {
       return await ZXing.BrowserVideoReader.listVideoInputDevices();
     }
     throw new Error('Perangkat tidak mendukung enumerateDevices');
@@ -473,33 +546,7 @@ async function getVideoInputs() {
   return devices.filter(d => d.kind === 'videoinput');
 }
 
-function setupScanner(){
-  if(!els.scanBtn) return;
-
-  els.scanBtn.addEventListener('click', async ()=>{
-    scanModalInst = bootstrap.Modal.getOrCreateInstance(els.scanModal);
-    scanModalInst.show();
-
-    try{
-      if (!isSecureContextOK()) {
-        els.scanStatus.textContent = 'Kamera hanya bisa diakses lewat HTTPS atau localhost.';
-        return;
-      }
-      els.scanStatus.textContent = 'Meminta izin kamera…';
-      await ensureCameraPermission();
-      await startScanner();
-    }catch(err){
-      els.scanStatus.textContent = 'Gagal akses kamera: ' + err.message;
-    }
-  });
-
-  els.scanModal?.addEventListener('hidden.bs.modal', stopScanner);
-  els.toggleCamera?.addEventListener('click', switchCamera);
-  els.toggleTorch?.addEventListener('click', toggleTorch);
-}
-
 async function startScanner(){
-  scannedOnce = false;
   if(!window.ZXing){ els.scanStatus.textContent = 'Library scanner belum termuat.'; return; }
   codeReader = codeReader || new ZXing.BrowserMultiFormatReader();
 
@@ -514,30 +561,43 @@ async function startScanner(){
   await startDecodeFromDevice(currentDeviceId);
 }
 
-// gunakan API ZXing untuk memulai decoding, dan ambil stream dari video untuk torch
 async function startDecodeFromDevice(deviceId){
   els.scanStatus.textContent = 'Membuka kamera…';
-  await stopScanner(); // clear dulu
+  await stopScanner(); // pastikan bersih
 
-  // ZXing yang handle stream
-  await codeReader.decodeFromVideoDevice(deviceId || null, els.scanVideo, (result, err) => {
-    if(result && !scannedOnce){
-      scannedOnce = true;
+  const constraints = {
+    video: {
+      deviceId: deviceId ? { exact: deviceId } : undefined,
+      focusMode: 'continuous',
+      width: { ideal: 1280 },
+      height: { ideal: 720 }
+    },
+    audio: false
+  };
+
+  const stream = await navigator.mediaDevices.getUserMedia(constraints);
+  activeStream = stream;
+  els.scanVideo.srcObject = stream;
+  await els.scanVideo.play();
+
+  els.scanStatus.textContent = 'Memindai…';
+
+  codeReader.decodeFromVideoDevice(deviceId || null, els.scanVideo, (result, err) => {
+    if(result){
       const text = String(result.getText() || '').trim();
       if(text){
-        els.search.value = text;  // isi pencarian kasir
-        // Tutup modal & stop scanner sedikit delay biar tidak bentrok UI
-        setTimeout(()=>{ scanModalInst?.hide(); addFromBar(); }, 50);
+        if (scanTarget === 'pos') {
+          els.search.value = text; // isi ke kolom kasir
+          scanModalInst?.hide();
+          addFromBar();
+        } else if (scanTarget && scanTarget.tagName === 'INPUT') {
+          scanTarget.value = text; // isi ke input barcode
+          scanModalInst?.hide();
+        }
       }
     }
-    // NotFoundError = frame tanpa kode → abaikan
+    // NotFoundError saat frame belum ada kode — abaikan
   });
-
-  // setelah decodeFromVideoDevice aktif, video sudah punya stream
-  // simpan stream supaya bisa torch
-  await els.scanVideo.play().catch(()=>{});
-  activeStream = els.scanVideo.srcObject || null;
-  els.scanStatus.textContent = 'Memindai…';
 }
 
 async function switchCamera(){
@@ -556,31 +616,27 @@ async function switchCamera(){
 async function toggleTorch(){
   try{
     const track = activeStream?.getVideoTracks?.()[0];
-    if(!track){ els.scanStatus.textContent = 'Stream kamera belum siap.'; return; }
+    if(!track) return;
     const caps = track.getCapabilities?.() || {};
     if(!caps.torch){ els.scanStatus.textContent = 'Senter tidak didukung kamera ini.'; return; }
-    torchOn = !torchOn;
-    await track.applyConstraints({ advanced: [{ torch: torchOn }] });
-    els.scanStatus.textContent = torchOn ? 'Senter ON' : 'Senter OFF';
+    const on = !track.getConstraints()?.advanced?.some?.(a=>a.torch);
+    await track.applyConstraints({ advanced: [{ torch: on }] });
+    els.scanStatus.textContent = on ? 'Senter ON' : 'Senter OFF';
   }catch(err){
     els.scanStatus.textContent = 'Gagal set senter: ' + err.message;
   }
 }
 
 async function stopScanner(){
-  // hentikan proses decode ZXing
   try{ codeReader?.reset(); }catch(_){}
-  // hentikan stream
   try{
-    const stream = els.scanVideo?.srcObject;
-    if(stream){
-      stream.getTracks().forEach(t => t.stop());
-      els.scanVideo.srcObject = null;
+    if(activeStream){
+      activeStream.getTracks().forEach(t => t.stop());
+      activeStream = null;
     }
-    activeStream = null;
   }catch(_){}
+  els.scanVideo.srcObject = null;
   els.scanStatus.textContent = '';
-  torchOn = false;
 }
 
 // ---------- misc ----------
