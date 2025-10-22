@@ -18,17 +18,32 @@
     padding-bottom: .35rem;
   }
   .pick .list-group{
+  position: fixed;             /* ubah dari absolute ke fixed */
+  left: 8px;
+  right: 8px;
+  top: auto;
+  bottom: 20px;                /* biar muncul di atas tombol bawah HP */
+  width: auto;
+  max-height: 60vh;            /* biar sesuai tinggi layar */
+  overflow-y: auto;
+  z-index: 2000;
+  border-radius: .5rem;
+  box-shadow: 0 8px 24px rgba(0,0,0,.2);
+  background: #fff;
+}
+
+@media (min-width:768px){
+  /* tetap pakai tampilan semula di desktop */
+  .pick .list-group{
     position: absolute;
     left: 0; right: 0;
-    /* ↓ turunin dropdown; ubah 12px kalau mau lebih rendah/tinggi */
     top: calc(100% + 12px);
     width: 100%;
     max-height: 280px;
     overflow: auto;
-    z-index: 1055;                 /* di atas komponen lain */
-    border-radius: .5rem;
-    box-shadow: 0 8px 24px rgba(0,0,0,.12);
+    z-index: 1055;
   }
+}
     
 /* Biar dropdown tidak ketahan overflow tabel (khusus halaman ini) */
 .table-responsive { overflow: visible !important; }
