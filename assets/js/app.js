@@ -1,10 +1,10 @@
-// ===================== Kasir klasik – app.js (with Product Manager) =====================
+// ===================== Kasir klasik – app.js (Product Manager updated) =====================
 
 const $ = (q) => document.querySelector(q);
 const rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 
 let PRODUCTS = [];
-let CART = []; // {id, sku, name, price, stock, qty}
+let CART = []; // {id, sku, name, price(sell), stock, cost_price, qty}
 
 const els = {
   search: $('#search'),
@@ -30,8 +30,9 @@ const els = {
   prodId: $('#prod-id'),
   prodSku: $('#prod-sku'),
   prodName: $('#prod-name'),
-  prodPrice: $('#prod-price'),
-  prodStock: $('#prod-stock'),
+  prodPrice: $('#prod-price'),   // HARGA JUAL
+  prodCost: $('#prod-cost'),     // MODAL (read-only)
+  prodStock: $('#prod-stock'),   // tampil saja (disabled)
   prodReset: $('#prod-reset'),
   prodSearch: $('#prod-search'),
   prodRows: $('#prod-rows'),
@@ -44,15 +45,15 @@ window.addEventListener('DOMContentLoaded', () => {
   loadProducts();
 
   // kasir
-  els.search.addEventListener('input', onSearchInput);
-  els.search.addEventListener('keydown', onSearchKey);
-  els.suggest.addEventListener('click', onSuggestClick);
+  els.search?.addEventListener('input', onSearchInput);
+  els.search?.addEventListener('keydown', onSearchKey);
+  els.suggest?.addEventListener('click', onSuggestClick);
 
-  els.addBtn.addEventListener('click', addFromBar);
-  els.clearBtn.addEventListener('click', clearAll);
-  els.payBtn.addEventListener('click', checkout);
-  els.mbPay.addEventListener('click', checkout);
-  els.pay.addEventListener('input', updateChange);
+  els.addBtn?.addEventListener('click', addFromBar);
+  els.clearBtn?.addEventListener('click', clearAll);
+  els.payBtn?.addEventListener('click', checkout);
+  els.mbPay?.addEventListener('click', checkout);
+  els.pay?.addEventListener('input', updateChange);
 
   // keyboard shortcuts
   document.addEventListener('keydown', (e) => {
@@ -76,9 +77,17 @@ async function loadProducts(){
     const r = await fetch('/api/products.php?q=');
     const j = await r.json();
     if(!j.ok) throw new Error(j.error||'Gagal ambil produk');
-    PRODUCTS = j.data || [];
-    // refresh tampilan manager jika terbuka
-    renderProductRows();
+
+    // Map: POS pakai price = sell_price
+    PRODUCTS = (j.data || []).map(p => ({
+      ...p,
+      price: Number(p.sell_price || p.price || 0), // untuk kasir
+      sell_price: Number(p.sell_price || 0),
+      cost_price: Number(p.cost_price || 0),
+      stock: Number(p.stock || 0),
+    }));
+
+    renderProductRows(); // refresh modal list
   }catch(e){ alert('Gagal memuat produk'); }
 }
 
@@ -99,7 +108,10 @@ function onSearchInput(){
   els.suggest.innerHTML = list.map((p,i)=>`
     <button type="button" class="list-group-item list-group-item-action" data-id="${p.id}" data-idx="${i}">
       <div class="d-flex justify-content-between">
-        <div class="text-truncate me-3"><strong>${p.name}</strong><div class="small text-muted">${p.sku} • Stok ${p.stock ?? 0}</div></div>
+        <div class="text-truncate me-3">
+          <strong>${p.name}</strong>
+          <div class="small text-muted">${p.sku} • Stok ${p.stock}</div>
+        </div>
         <div class="text-end fw-semibold">${rupiah(p.price)}</div>
       </div>
     </button>
@@ -141,7 +153,6 @@ function onSuggestClick(e){
 function addFromBar(){
   const q = (els.search.value||'').trim().toLowerCase();
   const qty = Math.max(1, parseInt(els.qty.value||'1',10));
-
   if(!q) return;
 
   let p = PRODUCTS.find(x => (x.sku||'').toLowerCase() === q);
@@ -319,7 +330,8 @@ function resetProdForm(){
   els.prodForm?.reset();
   els.prodId.value = '';
   els.prodPrice.value = 0;
-  els.prodStock.value = 0;
+  els.prodCost.value = 0;
+  els.prodStock.value = 0; // hanya tampil, tetap disabled
 }
 
 function renderProductRows(){
@@ -333,14 +345,9 @@ function renderProductRows(){
     <tr>
       <td class="text-monospace">${p.sku||'-'}</td>
       <td>${p.name||'-'}</td>
-      <td class="text-end">${rupiah(p.price||0)}</td>
-      <td class="text-center">
-        <div class="btn-group">
-          <button class="btn btn-outline-secondary btn-icon-sm" data-act="stok-" data-id="${p.id}">-</button>
-          <span class="px-2">${p.stock ?? 0}</span>
-          <button class="btn btn-outline-secondary btn-icon-sm" data-act="stok+" data-id="${p.id}">+</button>
-        </div>
-      </td>
+      <td class="text-end">${rupiah(p.sell_price||p.price||0)}</td>
+      <td class="text-end">${rupiah(p.cost_price||0)}</td>
+      <td class="text-center">${p.stock ?? 0}</td>
       <td class="text-end">
         <div class="btn-group btn-group-sm">
           <button class="btn btn-outline-primary" data-act="edit" data-id="${p.id}">Edit</button>
@@ -357,7 +364,6 @@ function renderProductRows(){
     btn.onclick = () => {
       if(act==='edit') fillProdForm(id);
       else if(act==='del') deleteProduct(id);
-      else if(act==='stok+' || act==='stok-') adjustStock(id, act==='stok+'? +1 : -1);
     };
   });
 }
@@ -368,25 +374,25 @@ function fillProdForm(id){
   els.prodId.value = p.id;
   els.prodSku.value = p.sku || '';
   els.prodName.value = p.name || '';
-  els.prodPrice.value = p.price || 0;
-  els.prodStock.value = p.stock || 0;
+  els.prodPrice.value = Number(p.sell_price || p.price || 0);
+  els.prodCost.value  = Number(p.cost_price || 0);
+  els.prodStock.value = Number(p.stock || 0);
 }
 
 async function onProdSave(e){
   e.preventDefault();
-  const id = els.prodId.value.trim();
-  const sku = els.prodSku.value.trim();
-  const name = els.prodName.value.trim();
-  const price = Number(els.prodPrice.value||0);
-  const stock = Number(els.prodStock.value||0);
+  const id = (els.prodId.value||'').trim();
+  const sku = (els.prodSku.value||'').trim();
+  const name = (els.prodName.value||'').trim();
+  const sellPrice = Number(els.prodPrice.value||0);
   if(!sku || !name) return alert('SKU & Nama wajib diisi');
 
   const fd = new FormData();
   if(id) fd.append('id', id);
   fd.append('sku', sku);
   fd.append('name', name);
-  fd.append('price', String(price));
-  fd.append('stock', String(stock));
+  fd.append('sell_price', String(sellPrice)); // kirim SELL PRICE
+  // stok & cost_price TIDAK dikirim—stok via pembelian, modal dari pembelian
 
   try{
     const r = await fetch('/api/product_save.php', { method:'POST', body: fd });
@@ -413,27 +419,6 @@ async function deleteProduct(id){
     await loadProducts();
     renderProductRows();
   }catch(err){ alert(err.message || 'Gagal menghapus'); }
-}
-
-async function adjustStock(id, delta){
-  const p = PRODUCTS.find(x=>String(x.id)===String(id));
-  if(!p) return;
-  const newStock = Math.max(0, (p.stock||0) + delta);
-
-  const fd = new FormData();
-  fd.append('id', id);
-  fd.append('sku', p.sku || '');
-  fd.append('name', p.name || '');
-  fd.append('price', String(p.price || 0));
-  fd.append('stock', String(newStock));
-
-  try{
-    const r = await fetch('/api/product_save.php', { method:'POST', body: fd });
-    const j = await r.json();
-    if(!j.ok) throw new Error(j.error || 'Gagal update stok');
-    await loadProducts();
-    renderProductRows();
-  }catch(err){ alert(err.message || 'Gagal update stok'); }
 }
 
 // ---------- misc ----------
