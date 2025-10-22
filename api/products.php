@@ -1,31 +1,35 @@
 <?php
 // api/products.php
 // List produk untuk POS & Kelola Produk.
-// Output: id, sku, name, stock, sell_price, cost_price, dan price (alias sell_price)
+// Output: id, sku, barcode, name, stock, sell_price, cost_price, dan price (alias sell_price)
 
+declare(strict_types=1);
 require_once __DIR__ . '/_init.php';
-header('Content-Type: application/json; charset=utf-8');
 
 try {
+    $pdo = db();
+
     $q = trim($_GET['q'] ?? '');
     $params = [];
     $where  = '';
 
     if ($q !== '') {
-        $where = "WHERE sku LIKE ? OR name LIKE ?";
+        // cari di sku / name / barcode  (dengan 1 exact match barcode juga)
+        $where = "WHERE (sku LIKE ? OR name LIKE ? OR barcode LIKE ? OR barcode = ?)";
         $like  = '%' . $q . '%';
-        $params = [$like, $like];
+        $params = [$like, $like, $like, $q];
     }
 
-    // Ambil sell_price/cost_price kalau ada; fallback ke price lama jika sell_price NULL
     $sql = "
         SELECT
             id,
             sku,
+            barcode,
             name,
             CAST(stock AS SIGNED) AS stock,
-            CAST(COALESCE(sell_price, price, 0) AS DECIMAL(12,2)) AS sell_price,
-            CAST(COALESCE(cost_price, 0)          AS DECIMAL(12,2)) AS cost_price
+            /* fallback ke kolom price lama jika sell_price masih null */
+            COALESCE(sell_price, price, 0) AS sell_price,
+            COALESCE(cost_price, 0)        AS cost_price
         FROM products
         $where
         ORDER BY name ASC
@@ -34,16 +38,20 @@ try {
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-    // Kompatibilitas lama: alias 'price' = sell_price
     foreach ($rows as &$r) {
-        $r['id']         = (int)$r['id'];
-        $r['stock']      = (int)$r['stock'];
-        $r['sell_price'] = (float)$r['sell_price'];
-        $r['cost_price'] = (float)$r['cost_price'];
-        $r['price']      = $r['sell_price']; // alias untuk UI lama
+        $r['id']         = (int)($r['id'] ?? 0);
+        $r['sku']        = (string)($r['sku'] ?? '');
+        $r['barcode']    = $r['barcode'] === null ? null : (string)$r['barcode'];
+        $r['name']       = (string)($r['name'] ?? '');
+        $r['stock']      = (int)($r['stock'] ?? 0);
+        $r['sell_price'] = (float)($r['sell_price'] ?? 0);
+        $r['cost_price'] = (float)($r['cost_price'] ?? 0);
+        // Kompat: alias 'price' utk UI POS lama
+        $r['price']      = (float)$r['sell_price'];
     }
+    unset($r);
 
     echo json_encode(['ok' => true, 'data' => $rows], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {
