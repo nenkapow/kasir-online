@@ -19,3 +19,10 @@
     }
   ]
 }
+
+"permissions": [
+  "camera"
+],
+"features": [
+  "camera"
+]
