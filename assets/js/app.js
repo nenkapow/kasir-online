@@ -1,4 +1,4 @@
-// ===================== Kasir klasik – app.js (Product Manager + Barcode Scanner + Barcode field) =====================
+// ===================== Kasir klasik – app.js (Product Manager + Scanner + SKU & Barcode Generator) =====================
 
 const $ = (q) => document.querySelector(q);
 const rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
@@ -30,14 +30,15 @@ const els = {
   prodId: $('#prod-id'),
   prodSku: $('#prod-sku'),
   prodName: $('#prod-name'),
-  prodPrice: $('#prod-price'),   // SELL
-  prodCost: $('#prod-cost'),     // modal/read-only
-  prodStock: $('#prod-stock'),   // read-only
+  prodPrice: $('#prod-price'),
+  prodCost: $('#prod-cost'),
+  prodStock: $('#prod-stock'),
   prodBarcode: $('#prod-barcode'),
   prodReset: $('#prod-reset'),
   prodSearch: $('#prod-search'),
   prodRows: $('#prod-rows'),
   genSkuBtn: $('#btn-gen-sku'),
+  genBarcodeBtn: $('#btn-gen-barcode'),
   scanBarcodeBtn: $('#btn-scan-barcode'),
 
   // scanner reusable
@@ -50,7 +51,6 @@ const els = {
 };
 
 window.addEventListener('DOMContentLoaded', () => {
-  // silent login (kalau ada session)
   fetch('/api/login.php', { method: 'POST' }).catch(()=>{});
 
   loadProducts();
@@ -66,7 +66,6 @@ window.addEventListener('DOMContentLoaded', () => {
   els.mbPay?.addEventListener('click', checkout);
   els.pay?.addEventListener('input', updateChange);
 
-  // keyboard shortcuts
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { clearBar(); }
     if (e.key.toLowerCase() === 'b' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); checkout(); }
@@ -81,11 +80,13 @@ window.addEventListener('DOMContentLoaded', () => {
     const sku = generateSKU(els.prodName.value || '');
     if (sku) els.prodSku.value = sku;
   });
+  els.genBarcodeBtn?.addEventListener('click', () => {
+    els.prodBarcode.value = generateEAN13Unique(els.prodName.value || els.prodSku.value || '');
+  });
 
   // scanner
   setupScanner();
 
-  // fokus awal
   setTimeout(()=>els.search?.focus(), 200);
 });
 
@@ -96,17 +97,16 @@ async function loadProducts(){
     const j = await r.json();
     if(!j.ok) throw new Error(j.error||'Gagal ambil produk');
 
-    // Map: POS pakai price = sell_price
     PRODUCTS = (j.data || []).map(p => ({
       ...p,
-      price: Number(p.sell_price || p.price || 0), // untuk kasir
+      price: Number(p.sell_price || p.price || 0),
       sell_price: Number(p.sell_price || 0),
       cost_price: Number(p.cost_price || 0),
       stock: Number(p.stock || 0),
       barcode: p.barcode || null,
     }));
 
-    renderProductRows(); // refresh modal list
+    renderProductRows();
   }catch(e){ alert('Gagal memuat produk'); }
 }
 
@@ -118,7 +118,6 @@ function onSearchInput(){
   selIndex = -1;
   if(!q){ els.suggest.classList.add('d-none'); els.suggest.innerHTML=''; return; }
 
-  // filter by name/sku/startsWith barcode
   const list = PRODUCTS
     .filter(p =>
       (p.sku||'').toLowerCase().includes(q) ||
@@ -180,11 +179,8 @@ function addFromBar(){
   const qty = Math.max(1, parseInt(els.qty.value||'1',10));
   if(!q) return;
 
-  // 1) by exact barcode
   let p = PRODUCTS.find(x => (x.barcode||'').toLowerCase() === q);
-  // 2) by exact SKU
   if(!p) p = PRODUCTS.find(x => (x.sku||'').toLowerCase() === q);
-  // 3) by name includes
   if(!p) p = PRODUCTS.find(x => (x.name||'').toLowerCase().includes(q));
   if(!p){ beep(); return; }
 
@@ -360,7 +356,7 @@ function resetProdForm(){
   els.prodId.value = '';
   els.prodPrice.value = 0;
   els.prodCost.value = 0;
-  els.prodStock.value = 0; // hanya tampil
+  els.prodStock.value = 0;
   els.prodBarcode.value = '';
 }
 
@@ -389,7 +385,6 @@ function renderProductRows(){
     </tr>
   `).join('');
 
-  // delegasi klik
   els.prodRows.querySelectorAll('button[data-act]').forEach(btn=>{
     const id = btn.dataset.id;
     const act = btn.dataset.act;
@@ -425,8 +420,8 @@ async function onProdSave(e){
   if(id) fd.append('id', id);
   fd.append('sku', sku);
   fd.append('name', name);
-  fd.append('sell_price', String(sellPrice)); // SELL PRICE
-  if(barcode) fd.append('barcode', barcode);  // BARCODE (unik, boleh kosong)
+  fd.append('sell_price', String(sellPrice));
+  if(barcode) fd.append('barcode', barcode);
 
   try{
     const r = await fetch('/api/product_save.php', { method:'POST', body: fd });
@@ -457,29 +452,59 @@ async function deleteProduct(id){
 
 // ---------- SKU generator ----------
 function generateSKU(name){
-  // contoh: "Indomie Goreng Spesial" -> "IND-GRS-123"
   const clean = (name || '').replace(/[^A-Za-z0-9\s]/g,' ').trim();
   if(!clean) return '';
   const words = clean.split(/\s+/);
   const p1 = (words[0]||'').substring(0,3).toUpperCase();
   const p2 = (words.slice(1).map(w=>w[0]).join('') || 'X').substring(0,3).toUpperCase();
-  // hindari tabrakan sederhana dengan 3 digit waktu
   const p3 = String(Date.now()).slice(-3);
   let sku = `${p1}-${p2}-${p3}`;
-  // pastikan tidak duplikat di memory (seadanya; validasi unik final di server)
   if (PRODUCTS.some(p=>String(p.sku).toUpperCase()===sku)) {
     sku = `${p1}-${p2}-${Math.floor(Math.random()*900+100)}`;
   }
   return sku;
 }
 
+// ---------- BARCODE generator (EAN-13) ----------
+function ean13CheckDigit(twelveDigits){
+  const ds = String(twelveDigits).padStart(12,'0').slice(0,12).split('').map(d=>+d);
+  const sumOdd  = ds.filter((_,i)=>i%2===0).reduce((a,b)=>a+b,0); // posisi 1,3,5...
+  const sumEven = ds.filter((_,i)=>i%2===1).reduce((a,b)=>a+b,0); // 2,4,6...
+  const total = sumOdd + sumEven*3;
+  const cd = (10 - (total % 10)) % 10;
+  return String(cd);
+}
+function generateEAN13Base(seed){
+  // ambil angka dari seed, jika kurang tambahkan dari ASCII
+  const digits = (seed.replace(/\D/g,'') + Array.from(seed).map(c=>c.charCodeAt(0)%10).join('')).replace(/\D/g,'');
+  let base = digits.padEnd(12,'0').slice(0,12);
+  if(!/\d{12}/.test(base)) base = String(Date.now()).slice(-12);
+  return base;
+}
+function generateEAN13(seed){
+  const base = generateEAN13Base(seed || '');
+  return base + ean13CheckDigit(base);
+}
+function generateEAN13Unique(seed){
+  let code = generateEAN13(seed);
+  let guard = 0;
+  while (PRODUCTS.some(p => (p.barcode||'') === code) && guard < 20){
+    // tweak 12th digit lalu hitung ulang check digit
+    let base = code.slice(0,12);
+    const n = (parseInt(base.slice(-3)) + Math.floor(Math.random()*7)+1) % 1000;
+    base = base.slice(0,9) + String(n).padStart(3,'0');
+    code = base + ean13CheckDigit(base);
+    guard++;
+  }
+  return code;
+}
+
 // ---------- Barcode Scanner (reusable) ----------
 let scanModalInst = null;
-let codeReader = null;               // ZXing.BrowserMultiFormatReader
+let codeReader = null;
 let currentDeviceId = null;
-let torchOn = false;
 let activeStream = null;
-// target: 'pos' atau element input (barcode field)
+// target: 'pos' atau element input
 let scanTarget = 'pos';
 
 function setupScanner(){
@@ -491,7 +516,7 @@ function setupScanner(){
   }
   if(els.scanBarcodeBtn){
     els.scanBarcodeBtn.addEventListener('click', async ()=>{
-      scanTarget = els.prodBarcode; // element
+      scanTarget = els.prodBarcode;
       openScanner();
     });
   }
@@ -517,14 +542,10 @@ async function openScanner(){
     els.scanStatus.textContent = 'Gagal akses kamera: ' + err.message;
   }
 }
-
-// helper: cek secure context (HTTPS) & dukungan API
 function isSecureContextOK() {
   return (location.protocol === 'https:' || location.hostname === 'localhost') &&
          !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 }
-
-// helper: minta izin kamera dulu biar enumerateDevices return label/deviceId
 async function ensureCameraPermission() {
   try {
     const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
@@ -533,8 +554,6 @@ async function ensureCameraPermission() {
     throw new Error('Izin kamera ditolak atau tidak tersedia');
   }
 }
-
-// helper: ambil daftar kamera
 async function getVideoInputs() {
   if (!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices)) {
     if (window.ZXing && ZXing.BrowserVideoReader?.listVideoInputDevices) {
@@ -545,7 +564,6 @@ async function getVideoInputs() {
   const devices = await navigator.mediaDevices.enumerateDevices();
   return devices.filter(d => d.kind === 'videoinput');
 }
-
 async function startScanner(){
   if(!window.ZXing){ els.scanStatus.textContent = 'Library scanner belum termuat.'; return; }
   codeReader = codeReader || new ZXing.BrowserMultiFormatReader();
@@ -554,16 +572,14 @@ async function startScanner(){
   const devices = await getVideoInputs();
   if(!devices.length){ els.scanStatus.textContent = 'Kamera tidak ditemukan.'; return; }
 
-  // pilih kamera belakang jika ada
   const backCam = devices.find(d => /back|rear|belakang/i.test(d.label || ''));
   currentDeviceId = (backCam || devices[0]).deviceId;
 
   await startDecodeFromDevice(currentDeviceId);
 }
-
 async function startDecodeFromDevice(deviceId){
   els.scanStatus.textContent = 'Membuka kamera…';
-  await stopScanner(); // pastikan bersih
+  await stopScanner();
 
   const constraints = {
     video: {
@@ -587,19 +603,17 @@ async function startDecodeFromDevice(deviceId){
       const text = String(result.getText() || '').trim();
       if(text){
         if (scanTarget === 'pos') {
-          els.search.value = text; // isi ke kolom kasir
+          els.search.value = text;
           scanModalInst?.hide();
           addFromBar();
         } else if (scanTarget && scanTarget.tagName === 'INPUT') {
-          scanTarget.value = text; // isi ke input barcode
+          scanTarget.value = text;
           scanModalInst?.hide();
         }
       }
     }
-    // NotFoundError saat frame belum ada kode — abaikan
   });
 }
-
 async function switchCamera(){
   try{
     const devices = await getVideoInputs();
@@ -612,7 +626,6 @@ async function switchCamera(){
     els.scanStatus.textContent = 'Gagal ganti kamera: ' + err.message;
   }
 }
-
 async function toggleTorch(){
   try{
     const track = activeStream?.getVideoTracks?.()[0];
@@ -626,7 +639,6 @@ async function toggleTorch(){
     els.scanStatus.textContent = 'Gagal set senter: ' + err.message;
   }
 }
-
 async function stopScanner(){
   try{ codeReader?.reset(); }catch(_){}
   try{
