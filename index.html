@@ -13,10 +13,13 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
   <link rel="stylesheet" href="assets/css/style.css" />
   <style>
-    /* Modal scanner */
-    #scanVideo { width: 100%; border-radius: .5rem; background:#000; }
-    .scan-badge { position:absolute; left:1rem; top:1rem; }
-    .scan-toolbar { gap:.5rem; }
+    .total-box{background:#fff;border:1px solid #e5e7eb;border-radius:.5rem}
+    .qty-group{display:inline-flex;gap:.25rem;align-items:center}
+    .btn-icon-sm{padding:.25rem .5rem}
+    /* kecilkan sedikit di hp */
+    @media (max-width: 576px){
+      .btn-icon-sm{padding:.2rem .4rem;font-size:.85rem}
+    }
   </style>
 </head>
 <body class="bg-light">
@@ -43,12 +46,10 @@
   <!-- INPUT BAR -->
   <div class="row g-2 align-items-end mb-3">
     <div class="col-12 col-md-8">
-      <label class="form-label mb-1">Scan / Cari Produk (SKU atau Nama)</label>
+      <label class="form-label mb-1">Scan / Cari Produk (SKU / Nama / Barcode)</label>
       <div class="input-group">
-        <input id="search" class="form-control form-control-lg" placeholder="Contoh: RK0001 / Indomie…" autocomplete="off">
-        <button id="scan-btn" class="btn btn-outline-secondary btn-lg" type="button" title="Scan Barcode">
-          📷 Scan
-        </button>
+        <input id="search" class="form-control form-control-lg" placeholder="Contoh: RK0001 / Indomie / 899..." autocomplete="off">
+        <button id="scan-btn" class="btn btn-outline-secondary"><span class="me-1">📷</span>Scan</button>
       </div>
       <div id="suggest" class="list-group shadow-sm mt-1 d-none"></div>
     </div>
@@ -120,28 +121,41 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
       </div>
       <div class="modal-body">
-        <form id="prod-form" class="row g-2 mb-3">
+        <form id="prod-form" class="row g-2 mb-3" autocomplete="off">
           <input type="hidden" id="prod-id">
-          <div class="col-6 col-md-3">
+          <div class="col-12 col-md-4">
             <label class="form-label">SKU</label>
-            <input id="prod-sku" class="form-control" required>
+            <div class="input-group">
+              <input id="prod-sku" class="form-control" required>
+              <button id="btn-gen-sku" type="button" class="btn btn-outline-secondary">Generate</button>
+            </div>
+            <div class="form-text">Bisa diubah manual, unik per produk.</div>
           </div>
           <div class="col-12 col-md-5">
             <label class="form-label">Nama</label>
             <input id="prod-name" class="form-control" required>
           </div>
-          <div class="col-6 col-md-2">
+          <div class="col-6 col-md-3">
             <label class="form-label">Harga Jual (Rp)</label>
             <input id="prod-price" type="number" min="0" step="1" class="form-control" value="0" required>
           </div>
-          <div class="col-6 col-md-2">
-            <label class="form-label">Modal (Rp)</label>
+
+          <div class="col-12 col-md-6">
+            <label class="form-label">Barcode</label>
+            <div class="input-group">
+              <input id="prod-barcode" class="form-control" placeholder="899..., EAN/UPC/Code128" />
+              <button id="btn-scan-barcode" type="button" class="btn btn-outline-secondary"><span class="me-1">📷</span>Scan</button>
+            </div>
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label">Modal (otomatis)</label>
             <input id="prod-cost" class="form-control" value="0" readonly>
           </div>
-          <div class="col-6 col-md-2">
-            <label class="form-label">Stok</label>
-            <input id="prod-stock" type="number" class="form-control" value="0" disabled>
+            <div class="col-6 col-md-3">
+            <label class="form-label">Stok (lihat)</label>
+            <input id="prod-stock" class="form-control" value="0" readonly>
           </div>
+
           <div class="col-12 d-flex gap-2">
             <button class="btn btn-primary" type="submit">Simpan</button>
             <button id="prod-reset" class="btn btn-outline-secondary" type="button">Baru</button>
@@ -150,7 +164,7 @@
 
         <div class="input-group mb-2">
           <span class="input-group-text">Cari</span>
-          <input id="prod-search" class="form-control" placeholder="Nama / SKU…">
+          <input id="prod-search" class="form-control" placeholder="Nama / SKU / Barcode…">
         </div>
 
         <div class="table-responsive">
@@ -159,10 +173,10 @@
               <tr>
                 <th style="width:120px">SKU</th>
                 <th>Nama</th>
-                <th class="text-end" style="width:120px">Harga Jual</th>
+                <th class="text-end" style="width:120px">HJ</th>
                 <th class="text-end" style="width:120px">Modal</th>
-                <th class="text-center" style="width:120px">Stok</th>
-                <th style="width:160px"></th>
+                <th class="text-center" style="width:90px">Stok</th>
+                <th style="width:210px"></th>
               </tr>
             </thead>
             <tbody id="prod-rows"></tbody>
@@ -174,35 +188,34 @@
 </div>
 <!-- ================= /MODAL KELOLA PRODUK ================= -->
 
-<!-- ================ MODAL SCANNER ================ -->
+<!-- ================ MODAL SCAN BARCODE (reusable) ================ -->
 <div class="modal fade" id="scanModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title">Scan Barcode</h5>
-        <div class="scan-toolbar d-flex ms-auto">
-          <button id="toggle-camera" class="btn btn-outline-secondary btn-sm" type="button">Ganti Kamera</button>
-          <button id="toggle-torch" class="btn btn-outline-secondary btn-sm" type="button">Senter</button>
+        <div class="d-flex gap-2">
+          <button id="toggle-camera" type="button" class="btn btn-outline-secondary btn-sm">Ganti Kamera</button>
+          <button id="toggle-torch" type="button" class="btn btn-outline-secondary btn-sm">Senter</button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
         </div>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
       </div>
-      <div class="modal-body position-relative">
-        <span class="badge text-bg-dark scan-badge">Arahkan ke barcode</span>
-        <video id="scanVideo" playsinline></video>
-        <div id="scanStatus" class="text-center text-muted small mt-2"></div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
+      <div class="modal-body">
+        <div class="ratio ratio-4x3 bg-dark rounded">
+          <video id="scanVideo" autoplay muted playsinline></video>
+        </div>
+        <div id="scanStatus" class="mt-2 small text-muted"></div>
       </div>
     </div>
   </div>
 </div>
-<!-- ================= /MODAL SCANNER ================= -->
+<!-- ================= /MODAL SCAN BARCODE ================= -->
 
 <!-- JS -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" defer></script>
-<!-- ZXing (barcode) -->
-<script src="https://unpkg.com/@zxing/library@0.19.1" defer></script>
+<!-- ZXing (scanner) -->
+<script src="https://unpkg.com/@zxing/library@0.20.0" defer></script>
+<!-- App -->
 <script src="assets/js/app.js" defer></script>
 
 <!-- Service Worker (auto update) -->
