@@ -120,12 +120,16 @@
             <input id="prod-name" class="form-control" required>
           </div>
           <div class="col-6 col-md-2">
-            <label class="form-label">Harga (Rp)</label>
+            <label class="form-label">Harga Jual (Rp)</label>
             <input id="prod-price" type="number" min="0" step="1" class="form-control" value="0" required>
           </div>
           <div class="col-6 col-md-2">
+            <label class="form-label">Modal (Rp)</label>
+            <input id="prod-cost" class="form-control" value="0" readonly>
+          </div>
+          <div class="col-6 col-md-2">
             <label class="form-label">Stok</label>
-            <input id="prod-stock" type="number" min="0" step="1" class="form-control" value="0" required>
+            <input id="prod-stock" type="number" class="form-control" value="0" disabled>
           </div>
           <div class="col-12 d-flex gap-2">
             <button class="btn btn-primary" type="submit">Simpan</button>
@@ -144,9 +148,10 @@
               <tr>
                 <th style="width:120px">SKU</th>
                 <th>Nama</th>
-                <th class="text-end" style="width:120px">Harga</th>
+                <th class="text-end" style="width:120px">Harga Jual</th>
+                <th class="text-end" style="width:120px">Modal</th>
                 <th class="text-center" style="width:120px">Stok</th>
-                <th style="width:210px"></th>
+                <th style="width:160px"></th>
               </tr>
             </thead>
             <tbody id="prod-rows"></tbody>
