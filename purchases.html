@@ -29,6 +29,16 @@
     border-radius: .5rem;
     box-shadow: 0 8px 24px rgba(0,0,0,.12);
   }
+    
+/* Biar dropdown tidak ketahan overflow tabel (khusus halaman ini) */
+.table-responsive { overflow: visible !important; }
+
+/* Supaya posisi dropdown nempel ke sel kolom yang benar */
+#tblItems td { position: relative; }
+
+/* Turunkan dropdown biar ada jarak dari input */
+.pick .list-group { top: calc(100% + 18px) !important; }
+    
   /* area “buffer” supaya klik di celah kecil di atas dropdown
      gak langsung nutup list */
   .pick .list-group::before{
