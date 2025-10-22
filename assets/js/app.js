@@ -439,14 +439,52 @@ let currentDeviceId = null;
 let torchOn = false;
 let activeStream = null;
 
+// helper: cek secure context (HTTPS) & dukungan API
+function isSecureContextOK() {
+  return (location.protocol === 'https:' || location.hostname === 'localhost') &&
+         !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+}
+
+// helper: minta izin kamera dulu biar enumerateDevices return label/deviceId
+async function ensureCameraPermission() {
+  try {
+    const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    // langsung tutup stream sementara
+    tmp.getTracks().forEach(t => t.stop());
+  } catch (err) {
+    throw new Error('Izin kamera ditolak atau tidak tersedia');
+  }
+}
+
+// helper: ambil daftar kamera yang stabil di semua device
+async function getVideoInputs() {
+  // kalau ZXing punya helper & work, boleh dipakai; tapi kita prefer standar
+  if (!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices)) {
+    // fallback ke ZXing helper bila ada
+    if (window.ZXing && ZXing.BrowserVideoReader?.listVideoInputDevices) {
+      return await ZXing.BrowserVideoReader.listVideoInputDevices();
+    }
+    throw new Error('Perangkat tidak mendukung enumerateDevices');
+  }
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  return devices.filter(d => d.kind === 'videoinput');
+}
+
 function setupScanner(){
-  if(!els.scanBtn || !window.ZXing) return;
+  if(!els.scanBtn) return;
 
   els.scanBtn.addEventListener('click', async ()=>{
+    scanModalInst = bootstrap.Modal.getOrCreateInstance(els.scanModal);
+    scanModalInst.show();
+
     try{
-      scanModalInst = bootstrap.Modal.getOrCreateInstance(els.scanModal);
-      scanModalInst.show();
-      els.scanStatus.textContent = 'Menyiapkan kamera…';
+      // validasi dasar
+      if (!isSecureContextOK()) {
+        els.scanStatus.textContent = 'Kamera hanya bisa diakses lewat HTTPS atau localhost.';
+        return;
+      }
+      els.scanStatus.textContent = 'Meminta izin kamera…';
+      await ensureCameraPermission();
       await startScanner();
     }catch(err){
       els.scanStatus.textContent = 'Gagal akses kamera: ' + err.message;
@@ -460,30 +498,26 @@ function setupScanner(){
 
 async function startScanner(){
   if(!window.ZXing){ els.scanStatus.textContent = 'Library scanner belum termuat.'; return; }
-
   codeReader = codeReader || new ZXing.BrowserMultiFormatReader();
-  const devices = await ZXing.BrowserVideoReader.listVideoInputDevices();
 
-  if(!devices.length){
-    els.scanStatus.textContent = 'Kamera tidak ditemukan.';
-    return;
-  }
+  els.scanStatus.textContent = 'Menyiapkan kamera…';
+  const devices = await getVideoInputs();
+  if(!devices.length){ els.scanStatus.textContent = 'Kamera tidak ditemukan.'; return; }
 
   // pilih kamera belakang jika ada
-  const backCam = devices.find(d => /back|rear|belakang/i.test(d.label));
-  currentDeviceId = backCam?.deviceId || devices[0].deviceId;
+  const backCam = devices.find(d => /back|rear|belakang/i.test(d.label || ''));
+  currentDeviceId = (backCam || devices[0]).deviceId;
 
   await startDecodeFromDevice(currentDeviceId);
 }
 
 async function startDecodeFromDevice(deviceId){
   els.scanStatus.textContent = 'Membuka kamera…';
-  // hentikan dulu kalau ada yang aktif
-  await stopScanner();
+  await stopScanner(); // pastikan bersih
 
   const constraints = {
     video: {
-      deviceId: { exact: deviceId },
+      deviceId: deviceId ? { exact: deviceId } : undefined,
       focusMode: 'continuous',
       width: { ideal: 1280 },
       height: { ideal: 720 }
@@ -491,6 +525,7 @@ async function startDecodeFromDevice(deviceId){
     audio: false
   };
 
+  // dapatkan stream manual supaya kita bisa kontrol torch dll.
   const stream = await navigator.mediaDevices.getUserMedia(constraints);
   activeStream = stream;
   els.scanVideo.srcObject = stream;
@@ -498,23 +533,23 @@ async function startDecodeFromDevice(deviceId){
 
   els.scanStatus.textContent = 'Memindai…';
 
-  codeReader.decodeFromVideoDevice(deviceId, els.scanVideo, (result, err) => {
+  // gunakan decodeFromVideoDevice kalau ada deviceId, atau decodeFromStream kalau mau
+  codeReader.decodeFromVideoDevice(deviceId || null, els.scanVideo, (result, err) => {
     if(result){
       const text = String(result.getText() || '').trim();
       if(text){
-        // Auto: isi ke input & tambah
-        els.search.value = text;
+        els.search.value = text; // isi ke input kasir
         scanModalInst?.hide();
         addFromBar();
       }
     }
-    // error callback dari ZXing sering berupa NotFoundError saat belum ketemu — aman diabaikan
+    // NotFoundError saat frame belum ada kode — abaikan
   });
 }
 
 async function switchCamera(){
   try{
-    const devices = await ZXing.BrowserVideoReader.listVideoInputDevices();
+    const devices = await getVideoInputs();
     if(devices.length < 2){ els.scanStatus.textContent = 'Kamera ganda tidak tersedia.'; return; }
     const idx = devices.findIndex(d => d.deviceId === currentDeviceId);
     const next = devices[(idx + 1) % devices.length];
@@ -540,9 +575,7 @@ async function toggleTorch(){
 }
 
 async function stopScanner(){
-  try{
-    codeReader?.reset();
-  }catch(_){}
+  try{ codeReader?.reset(); }catch(_){}
   try{
     if(activeStream){
       activeStream.getTracks().forEach(t => t.stop());
