@@ -34,7 +34,7 @@ function db(): PDO {
   static $pdo;
   if ($pdo instanceof PDO) return $pdo;
 
-  // Railway MySQL env (paling umum):
+  // Railway MySQL env (umum):
   // MYSQLHOST, MYSQLPORT, MYSQLDATABASE, MYSQLUSER, MYSQLPASSWORD
   $host = env_any(['MYSQLHOST','DB_HOST','RAILWAY_PRIVATE_DOMAIN'], '127.0.0.1');
   $port = env_any(['MYSQLPORT','DB_PORT'], '3306');
@@ -43,7 +43,6 @@ function db(): PDO {
   $pass = env_any(['MYSQLPASSWORD','DB_PASS','MYSQL_ROOT_PASSWORD'], '');
 
   $dsn = "mysql:host={$host};port={$port};dbname={$name};charset=utf8mb4";
-
   $opt = [
     PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
@@ -81,17 +80,22 @@ function require_auth(): void {
   if (!is_authed()) json(['ok' => false, 'error' => 'Unauthorized'], 401);
 }
 
-/* Backward compatibility untuk kode lama */
+/* Backward compatibility */
 function check_pin(): bool { return is_authed(); }
 
 /* === Global PDO siap pakai di endpoint === */
 $pdo = db();
 
-/* === Error handler: balas JSON rapi ketimbang HTML notice === */
+/* === Error handler: pastikan semua error keluar sebagai JSON rapi === */
 ini_set('display_errors', '0');
 ini_set('display_startup_errors', '0');
 error_reporting(E_ALL);
 
-set_exception_handler(function(Throwable $e) {
+set_error_handler(function (int $severity, string $message, string $file = '', int $line = 0): bool {
+  // Ubah warning/notice jadi exception agar ditangani handler di bawah
+  throw new ErrorException($message, 0, $severity, $file, $line);
+});
+
+set_exception_handler(function (Throwable $e) {
   json(['ok' => false, 'error' => $e->getMessage()], 500);
 });
