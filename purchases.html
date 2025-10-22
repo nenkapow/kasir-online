@@ -11,7 +11,7 @@
     .text-muted-mini { font-size:.8rem; }
     .readonly { background:#f8f9fa; }
     .pick { position: relative; }
-    .pick .list-group { position:absolute; z-index:20; width:100%; max-height:220px; overflow:auto; }
+    .pick .list-group { position:absolute; z-index:20; width:100%; max-height:260px; overflow:auto; }
     .pick .list-group-item { cursor:pointer; }
   </style>
 </head>
@@ -44,7 +44,7 @@
             <thead class="table-light">
               <tr>
                 <th class="cell-sm">SKU</th>
-                <th>Nama Produk <small class="text-muted">(tampilkan HJ aktif di bawah)</small></th>
+                <th>Nama Produk <small class="text-muted">(HJ aktif ditampilkan di bawah)</small></th>
                 <th class="cell-sm">Qty</th>
                 <th class="cell-md">Harga (Beli)</th>
                 <th class="cell-md">Subtotal</th>
@@ -56,7 +56,7 @@
         </div>
 
         <button type="button" class="btn btn-outline-primary btn-sm" id="btnAdd">+ Tambah Item</button>
-        <hr />
+        <hr class="my-3" />
         <div class="d-flex justify-content-between">
           <h5>Total: <span id="totalText">Rp 0</span></h5>
           <button type="submit" class="btn btn-primary">Simpan Pembelian</button>
@@ -80,8 +80,8 @@ const totalText = document.getElementById('totalText');
 
 const rupiah = n => 'Rp ' + Number(n||0).toLocaleString('id-ID');
 
-// cache pencarian produk per query biar hemat request
-const productCache = new Map(); // key: q, val: array rows
+// cache pencarian biar hemat request
+const productCache = new Map();
 function searchProducts(q){
   q = (q||'').trim();
   if(productCache.has(q)) return Promise.resolve(productCache.get(q));
@@ -102,13 +102,13 @@ function makeRow(){
     </td>
     <td>
       <div class="pick">
-        <input class="form-control form-control-sm pick-input" placeholder="Ketik SKU / nama untuk pilih produk">
+        <input class="form-control form-control-sm pick-input" placeholder="Ketik SKU / Nama, lalu pilih">
         <div class="list-group d-none pick-list"></div>
       </div>
       <div class="text-start text-muted-mini mt-1 name-info"></div>
     </td>
     <td>
-      <input type="number" min="1" class="form-control form-control-sm qty" value="1">
+      <input type="number" min="1" step="1" class="form-control form-control-sm qty" value="1">
     </td>
     <td>
       <input type="number" min="0" step="1" class="form-control form-control-sm price" value="0">
@@ -125,7 +125,6 @@ btnAdd.addEventListener('click', ()=> {
   updateTotal();
 });
 
-// delegasi event
 function attachRowEvents(tr){
   const pickInput = tr.querySelector('.pick-input');
   const pickList  = tr.querySelector('.pick-list');
@@ -159,11 +158,7 @@ function attachRowEvents(tr){
     }, 250);
   });
 
-  pickList.addEventListener('click', e=>{
-    const btn = e.target.closest('button[list-group-item]');
-  });
-
-  // pilih dari list
+  // pilih dari list – default harga beli = cost_price terakhir
   pickList.addEventListener('click', (e)=>{
     const it = e.target.closest('button.list-group-item');
     if(!it) return;
@@ -177,8 +172,7 @@ function attachRowEvents(tr){
     pickInput.classList.add('readonly');
     pickInput.readOnly = true;
 
-    // default harga beli = cost terakhir (boleh diubah)
-    priceEl.value = cost;
+    priceEl.value = cost; // HARGA BELI pakai MODAL terakhir
     nameInfo.textContent = `Harga Jual (aktif): ${rupiah(sell)}`;
 
     pickList.classList.add('d-none'); pickList.innerHTML='';
