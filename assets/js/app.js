@@ -1,4 +1,4 @@
-// ===================== Kasir klasik – app.js (Product Manager updated) =====================
+// ===================== Kasir klasik – app.js (Product Manager + Barcode Scanner) =====================
 
 const $ = (q) => document.querySelector(q);
 const rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
@@ -36,6 +36,14 @@ const els = {
   prodReset: $('#prod-reset'),
   prodSearch: $('#prod-search'),
   prodRows: $('#prod-rows'),
+
+  // scanner
+  scanBtn: $('#scan-btn'),
+  scanModal: $('#scanModal'),
+  scanVideo: $('#scanVideo'),
+  scanStatus: $('#scanStatus'),
+  toggleCamera: $('#toggle-camera'),
+  toggleTorch: $('#toggle-torch'),
 };
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -66,6 +74,9 @@ window.addEventListener('DOMContentLoaded', () => {
   els.prodForm?.addEventListener('submit', onProdSave);
   els.prodReset?.addEventListener('click', resetProdForm);
   els.prodSearch?.addEventListener('input', renderProductRows);
+
+  // scanner
+  setupScanner();
 
   // fokus awal
   setTimeout(()=>els.search?.focus(), 200);
@@ -419,6 +430,127 @@ async function deleteProduct(id){
     await loadProducts();
     renderProductRows();
   }catch(err){ alert(err.message || 'Gagal menghapus'); }
+}
+
+// ---------- Barcode Scanner ----------
+let scanModalInst = null;
+let codeReader = null;               // ZXing.BrowserMultiFormatReader
+let currentDeviceId = null;
+let torchOn = false;
+let activeStream = null;
+
+function setupScanner(){
+  if(!els.scanBtn || !window.ZXing) return;
+
+  els.scanBtn.addEventListener('click', async ()=>{
+    try{
+      scanModalInst = bootstrap.Modal.getOrCreateInstance(els.scanModal);
+      scanModalInst.show();
+      els.scanStatus.textContent = 'Menyiapkan kamera…';
+      await startScanner();
+    }catch(err){
+      els.scanStatus.textContent = 'Gagal akses kamera: ' + err.message;
+    }
+  });
+
+  els.scanModal.addEventListener('hidden.bs.modal', stopScanner);
+  els.toggleCamera?.addEventListener('click', switchCamera);
+  els.toggleTorch?.addEventListener('click', toggleTorch);
+}
+
+async function startScanner(){
+  if(!window.ZXing){ els.scanStatus.textContent = 'Library scanner belum termuat.'; return; }
+
+  codeReader = codeReader || new ZXing.BrowserMultiFormatReader();
+  const devices = await ZXing.BrowserVideoReader.listVideoInputDevices();
+
+  if(!devices.length){
+    els.scanStatus.textContent = 'Kamera tidak ditemukan.';
+    return;
+  }
+
+  // pilih kamera belakang jika ada
+  const backCam = devices.find(d => /back|rear|belakang/i.test(d.label));
+  currentDeviceId = backCam?.deviceId || devices[0].deviceId;
+
+  await startDecodeFromDevice(currentDeviceId);
+}
+
+async function startDecodeFromDevice(deviceId){
+  els.scanStatus.textContent = 'Membuka kamera…';
+  // hentikan dulu kalau ada yang aktif
+  await stopScanner();
+
+  const constraints = {
+    video: {
+      deviceId: { exact: deviceId },
+      focusMode: 'continuous',
+      width: { ideal: 1280 },
+      height: { ideal: 720 }
+    },
+    audio: false
+  };
+
+  const stream = await navigator.mediaDevices.getUserMedia(constraints);
+  activeStream = stream;
+  els.scanVideo.srcObject = stream;
+  await els.scanVideo.play();
+
+  els.scanStatus.textContent = 'Memindai…';
+
+  codeReader.decodeFromVideoDevice(deviceId, els.scanVideo, (result, err) => {
+    if(result){
+      const text = String(result.getText() || '').trim();
+      if(text){
+        // Auto: isi ke input & tambah
+        els.search.value = text;
+        scanModalInst?.hide();
+        addFromBar();
+      }
+    }
+    // error callback dari ZXing sering berupa NotFoundError saat belum ketemu — aman diabaikan
+  });
+}
+
+async function switchCamera(){
+  try{
+    const devices = await ZXing.BrowserVideoReader.listVideoInputDevices();
+    if(devices.length < 2){ els.scanStatus.textContent = 'Kamera ganda tidak tersedia.'; return; }
+    const idx = devices.findIndex(d => d.deviceId === currentDeviceId);
+    const next = devices[(idx + 1) % devices.length];
+    currentDeviceId = next.deviceId;
+    await startDecodeFromDevice(currentDeviceId);
+  }catch(err){
+    els.scanStatus.textContent = 'Gagal ganti kamera: ' + err.message;
+  }
+}
+
+async function toggleTorch(){
+  try{
+    const track = activeStream?.getVideoTracks?.()[0];
+    if(!track) return;
+    const caps = track.getCapabilities?.() || {};
+    if(!caps.torch){ els.scanStatus.textContent = 'Senter tidak didukung kamera ini.'; return; }
+    torchOn = !torchOn;
+    await track.applyConstraints({ advanced: [{ torch: torchOn }] });
+    els.scanStatus.textContent = torchOn ? 'Senter ON' : 'Senter OFF';
+  }catch(err){
+    els.scanStatus.textContent = 'Gagal set senter: ' + err.message;
+  }
+}
+
+async function stopScanner(){
+  try{
+    codeReader?.reset();
+  }catch(_){}
+  try{
+    if(activeStream){
+      activeStream.getTracks().forEach(t => t.stop());
+      activeStream = null;
+    }
+  }catch(_){}
+  els.scanVideo.srcObject = null;
+  els.scanStatus.textContent = '';
 }
 
 // ---------- misc ----------
