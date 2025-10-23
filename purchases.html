@@ -103,8 +103,8 @@
         </div>
       </div>
       <div class="modal-body">
-        <div class="ratio ratio-16x9 mb-2">
-          <video id="scanVideo" playsinline muted></video>
+        <div class="ratio ratio-16x9 mb-2 bg-dark">
+          <video id="scanVideo" playsinline muted style="width:100%;height:100%;object-fit:cover"></video>
         </div>
         <div id="scanStatus" class="small text-muted">Menyiapkan kamera…</div>
       </div>
@@ -134,12 +134,12 @@ async function searchProducts(q){
   productCache.set(key, j.data||[]);
   return j.data||[];
 }
+
+// cari by barcode (dengan fallback UPC/EAN)
 async function getByBarcode(raw) {
-  // normalisasi dasar
   let code = String(raw || '').trim();
   if (!code) return null;
 
-  // helper request exact
   async function fetchExact(c) {
     const res = await fetch('api/products.php?barcode=' + encodeURIComponent(c));
     const j = await res.json();
@@ -147,28 +147,23 @@ async function getByBarcode(raw) {
     return null;
   }
 
-  // 1) exact
   let p = await fetchExact(code);
   if (p) return p;
 
-  // 2) kalau 12 digit (UPC-A), coba EAN-13 dengan leading zero
   if (code.length === 12 && /^\d{12}$/.test(code)) {
-    p = await fetchExact('0' + code);
+    p = await fetchExact('0' + code); // UPC-A → EAN-13
     if (p) return p;
   }
-
-  // 3) kalau 13 digit dan diawali 0, coba buang leading zero (jadi 12)
   if (code.length === 13 && code[0] === '0' && /^\d{13}$/.test(code)) {
-    p = await fetchExact(code.slice(1));
+    p = await fetchExact(code.slice(1)); // EAN-13(leading 0) → UPC-A
     if (p) return p;
   }
 
-  // 4) fallback: cari pakai q, lalu cocokkan barcode di frontend
   try {
     const rows = await searchProducts(code);
-    p = rows.find(r => String(r.barcode || '').trim() === code)
-      || rows.find(r => String(r.barcode || '').trim() === ('0' + code))
-      || rows.find(r => String(r.barcode || '').trim() === code.slice(1));
+    p = rows.find(r => String(r.barcode||'').trim() === code)
+      || rows.find(r => String(r.barcode||'').trim() === ('0'+code))
+      || rows.find(r => String(r.barcode||'').trim() === code.slice(1));
     if (p) return p;
   } catch (_) {}
 
@@ -326,9 +321,7 @@ loadRiwayat();
 // mulai dengan 1 baris kosong
 btnAdd.click();
 
-// -----------------------------------------------------------
-// SCANNER (re-use style dari kasir, khusus pembelian)
-// -----------------------------------------------------------
+/* ====================== SCANNER ====================== */
 const scanModal   = document.getElementById('scanModal');
 const scanVideo   = document.getElementById('scanVideo');
 const scanStatus  = document.getElementById('scanStatus');
@@ -357,10 +350,8 @@ async function getVideoInputs(){
   return devs.filter(d=>d.kind==='videoinput');
 }
 
-// buka modal scanner
 [btnScanTop, btnScanTop2, btnScanRow].forEach(b=>{
   b?.addEventListener('click', async ()=>{
-    // pastikan ada row aktif
     if(!activeRow){
       if(!tbody.querySelector('tr')) btnAdd.click();
       activeRow = tbody.querySelector('tr:last-child');
@@ -382,7 +373,25 @@ toggleTorch.addEventListener('click', tryToggleTorch);
 
 async function startScanner(){
   if(!window.ZXing){ scanStatus.textContent='Library scanner belum termuat.'; return; }
-  codeReader = codeReader || new ZXing.BrowserMultiFormatReader();
+
+  // >>> HINTS: dukung banyak format & lebih agresif
+  const HINTS = new Map();
+  HINTS.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  HINTS.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+    ZXing.BarcodeFormat.EAN_13,
+    ZXing.BarcodeFormat.EAN_8,
+    ZXing.BarcodeFormat.UPC_A,
+    ZXing.BarcodeFormat.UPC_E,
+    ZXing.BarcodeFormat.CODE_128,
+    ZXing.BarcodeFormat.CODE_39,
+    ZXing.BarcodeFormat.ITF,
+    ZXing.BarcodeFormat.CODABAR,
+    ZXing.BarcodeFormat.QR_CODE
+  ]);
+
+  codeReader = new ZXing.BrowserMultiFormatReader(HINTS);
+  codeReader.timeBetweenDecodingAttempts = 100;
+
   scanStatus.textContent = 'Menyiapkan kamera…';
   const devices = await getVideoInputs();
   if(!devices.length){ scanStatus.textContent='Kamera tidak ditemukan.'; return; }
@@ -390,46 +399,56 @@ async function startScanner(){
   currentDeviceId = back.deviceId;
   await startDecodeFromDevice(currentDeviceId);
 }
+
 async function startDecodeFromDevice(deviceId){
   scanStatus.textContent='Membuka kamera…';
   await stopScanner();
 
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { deviceId: { exact: deviceId }, width:{ideal:1280}, height:{ideal:720}, focusMode:'continuous' },
+  const constraints = {
+    video: {
+      deviceId: deviceId ? { exact: deviceId } : undefined,
+      focusMode: 'continuous',
+      width:  { ideal: 1920 },
+      height: { ideal: 1080 },
+      advanced: [{ zoom: 2 }]
+    },
     audio: false
-  });
+  };
+
+  const stream = await navigator.mediaDevices.getUserMedia(constraints);
   activeStream = stream;
+  scanVideo.setAttribute('playsinline', 'true');
   scanVideo.srcObject = stream;
   await scanVideo.play();
+
   scanStatus.textContent='Memindai…';
 
-  codeReader.decodeFromVideoDevice(deviceId, scanVideo, async (result, err) => {
-  if (result) {
-    const code = String(result.getText() || '').trim();
-    if (!code) return;
-    scanStatus.textContent = 'Terbaca: ' + code + ' — mencari produk…';
+  codeReader.decodeFromVideoDevice(deviceId || null, scanVideo, async (result, err) => {
+    if (result) {
+      const code = String(result.getText() || '').trim();
+      if (!code) return;
+      scanStatus.textContent = 'Terbaca: ' + code + ' — mencari produk…';
 
-    // pastikan ada baris aktif
-    if (!activeRow) {
-      if (!tbody.querySelector('tr')) btnAdd.click();
-      activeRow = tbody.querySelector('tr:last-child');
+      if (!activeRow) {
+        if (!tbody.querySelector('tr')) btnAdd.click();
+        activeRow = tbody.querySelector('tr:last-child');
+      }
+
+      const p = await getByBarcode(code);
+      if (!p) {
+        scanStatus.textContent = 'Kode ' + code + ' belum terdaftar. (Coba simpan barcode di Kelola Produk)';
+        return;
+      }
+
+      try { codeReader.reset(); } catch(_) {}
+      fillRowFromProduct(activeRow, p);
+      scanStatus.textContent = 'OK: ' + (p.name || p.sku);
+      setTimeout(() => scanModalInst?.hide(), 200);
     }
-
-    const p = await getByBarcode(code);
-    if (!p) {
-      scanStatus.textContent = 'Kode ' + code + ' belum terdaftar. (Coba simpan barcode di Kelola Produk)';
-      return; // biar tetap memindai jika mau coba barcode lain
-    }
-
-    // isi baris & berhenti scan
-    try { codeReader.reset(); } catch(_) {}
-    fillRowFromProduct(activeRow, p);
-    scanStatus.textContent = 'OK: ' + (p.name || p.sku);
-    setTimeout(() => scanModalInst?.hide(), 200);
-  }
-  // NotFoundError pada frame tanpa kode → abaikan
-});
+    // NotFoundError: abaikan
+  });
 }
+
 function fillRowFromProduct(tr, p){
   if(!tr||!p) return;
   const skuEl   = tr.querySelector('.sku');
@@ -443,6 +462,7 @@ function fillRowFromProduct(tr, p){
   info.textContent = `Harga Jual (aktif): ${rupiah(Number(p.sell_price||0))}`;
   recalcRow(tr); updateTotal();
 }
+
 async function switchCamera(){
   try{
     const devs = await getVideoInputs();
@@ -452,6 +472,7 @@ async function switchCamera(){
     await startDecodeFromDevice(currentDeviceId);
   }catch(err){ scanStatus.textContent='Gagal ganti kamera: '+err.message; }
 }
+
 async function tryToggleTorch(){
   try{
     const track = activeStream?.getVideoTracks?.()[0]; if(!track) return;
@@ -462,6 +483,7 @@ async function tryToggleTorch(){
     scanStatus.textContent = torchOn ? 'Senter ON' : 'Senter OFF';
   }catch(err){ scanStatus.textContent='Gagal set senter: '+err.message; }
 }
+
 async function stopScanner(){
   try{ codeReader?.reset(); }catch(_){}
   try{
