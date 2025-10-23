@@ -1,35 +1,37 @@
 <?php
 // api/products.php
-// List produk untuk POS & Kelola Produk.
-// Output: id, sku, barcode, name, stock, sell_price, cost_price, dan price (alias sell_price)
+// List produk untuk POS, kelola produk, & lookup by barcode.
+// Output: id, sku, name, stock, sell_price, cost_price, price(=sell_price), barcode
 
-declare(strict_types=1);
 require_once __DIR__ . '/_init.php';
+header('Content-Type: application/json; charset=utf-8');
 
 try {
-    $pdo = db();
+    $q       = trim($_GET['q'] ?? '');
+    $barcode = trim($_GET['barcode'] ?? ''); // <- NEW
+    $params  = [];
+    $where   = '';
 
-    $q = trim($_GET['q'] ?? '');
-    $params = [];
-    $where  = '';
-
-    if ($q !== '') {
-        // cari di sku / name / barcode  (dengan 1 exact match barcode juga)
-        $where = "WHERE (sku LIKE ? OR name LIKE ? OR barcode LIKE ? OR barcode = ?)";
-        $like  = '%' . $q . '%';
-        $params = [$like, $like, $like, $q];
+    if ($barcode !== '') {
+        // Pencarian barcode EXACT (tercepat untuk hasil scan)
+        $where  = "WHERE barcode = ?";
+        $params = [$barcode];
+    } elseif ($q !== '') {
+        // Pencarian umum (nama/SKU/Barcode like)
+        $where  = "WHERE sku LIKE ? OR name LIKE ? OR barcode LIKE ?";
+        $like   = '%' . $q . '%';
+        $params = [$like, $like, $like];
     }
 
     $sql = "
         SELECT
             id,
             sku,
-            barcode,
             name,
+            barcode,                                   -- NEW
             CAST(stock AS SIGNED) AS stock,
-            /* fallback ke kolom price lama jika sell_price masih null */
-            COALESCE(sell_price, price, 0) AS sell_price,
-            COALESCE(cost_price, 0)        AS cost_price
+            CAST(COALESCE(sell_price, price, 0) AS DECIMAL(12,2)) AS sell_price,
+            CAST(COALESCE(cost_price, 0)          AS DECIMAL(12,2)) AS cost_price
         FROM products
         $where
         ORDER BY name ASC
@@ -38,20 +40,16 @@ try {
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     foreach ($rows as &$r) {
-        $r['id']         = (int)($r['id'] ?? 0);
-        $r['sku']        = (string)($r['sku'] ?? '');
-        $r['barcode']    = $r['barcode'] === null ? null : (string)$r['barcode'];
-        $r['name']       = (string)($r['name'] ?? '');
-        $r['stock']      = (int)($r['stock'] ?? 0);
-        $r['sell_price'] = (float)($r['sell_price'] ?? 0);
-        $r['cost_price'] = (float)($r['cost_price'] ?? 0);
-        // Kompat: alias 'price' utk UI POS lama
-        $r['price']      = (float)$r['sell_price'];
+        $r['id']         = (int)$r['id'];
+        $r['stock']      = (int)$r['stock'];
+        $r['sell_price'] = (float)$r['sell_price'];
+        $r['cost_price'] = (float)$r['cost_price'];
+        $r['price']      = $r['sell_price']; // alias untuk UI lama
+        $r['barcode']    = $r['barcode'] ?? null;
     }
-    unset($r);
 
     echo json_encode(['ok' => true, 'data' => $rows], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {
