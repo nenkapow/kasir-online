@@ -134,15 +134,45 @@ async function searchProducts(q){
   productCache.set(key, j.data||[]);
   return j.data||[];
 }
-async function getByBarcode(code){
-  // exact by barcode (cepat & akurat)
-  const res = await fetch('api/products.php?barcode='+encodeURIComponent(code));
-  const j = await res.json();
-  if(j.ok && j.data && j.data.length) return j.data[0];
+async function getByBarcode(raw) {
+  // normalisasi dasar
+  let code = String(raw || '').trim();
+  if (!code) return null;
 
-  // fallback: cari via q & cocokan barcode di frontend
-  const rows = await searchProducts(code);
-  return rows.find(r => (r.barcode||'') === code) || null;
+  // helper request exact
+  async function fetchExact(c) {
+    const res = await fetch('api/products.php?barcode=' + encodeURIComponent(c));
+    const j = await res.json();
+    if (j.ok && Array.isArray(j.data) && j.data.length) return j.data[0];
+    return null;
+  }
+
+  // 1) exact
+  let p = await fetchExact(code);
+  if (p) return p;
+
+  // 2) kalau 12 digit (UPC-A), coba EAN-13 dengan leading zero
+  if (code.length === 12 && /^\d{12}$/.test(code)) {
+    p = await fetchExact('0' + code);
+    if (p) return p;
+  }
+
+  // 3) kalau 13 digit dan diawali 0, coba buang leading zero (jadi 12)
+  if (code.length === 13 && code[0] === '0' && /^\d{13}$/.test(code)) {
+    p = await fetchExact(code.slice(1));
+    if (p) return p;
+  }
+
+  // 4) fallback: cari pakai q, lalu cocokkan barcode di frontend
+  try {
+    const rows = await searchProducts(code);
+    p = rows.find(r => String(r.barcode || '').trim() === code)
+      || rows.find(r => String(r.barcode || '').trim() === ('0' + code))
+      || rows.find(r => String(r.barcode || '').trim() === code.slice(1));
+    if (p) return p;
+  } catch (_) {}
+
+  return null;
 }
 
 function makeRow(){
@@ -373,17 +403,32 @@ async function startDecodeFromDevice(deviceId){
   await scanVideo.play();
   scanStatus.textContent='Memindai…';
 
-  codeReader.decodeFromVideoDevice(deviceId, scanVideo, async (result, err)=>{
-    if(result){
-      const code = String(result.getText()||'').trim();
-      if(!code) return;
-      // terapkan ke baris aktif
-      const p = await getByBarcode(code);
-      if(!p){ scanStatus.textContent='Barcode tidak terdaftar.'; return; }
-      fillRowFromProduct(activeRow, p);
-      scanModalInst?.hide();
+  codeReader.decodeFromVideoDevice(deviceId, scanVideo, async (result, err) => {
+  if (result) {
+    const code = String(result.getText() || '').trim();
+    if (!code) return;
+    scanStatus.textContent = 'Terbaca: ' + code + ' — mencari produk…';
+
+    // pastikan ada baris aktif
+    if (!activeRow) {
+      if (!tbody.querySelector('tr')) btnAdd.click();
+      activeRow = tbody.querySelector('tr:last-child');
     }
-  });
+
+    const p = await getByBarcode(code);
+    if (!p) {
+      scanStatus.textContent = 'Kode ' + code + ' belum terdaftar. (Coba simpan barcode di Kelola Produk)';
+      return; // biar tetap memindai jika mau coba barcode lain
+    }
+
+    // isi baris & berhenti scan
+    try { codeReader.reset(); } catch(_) {}
+    fillRowFromProduct(activeRow, p);
+    scanStatus.textContent = 'OK: ' + (p.name || p.sku);
+    setTimeout(() => scanModalInst?.hide(), 200);
+  }
+  // NotFoundError pada frame tanpa kode → abaikan
+});
 }
 function fillRowFromProduct(tr, p){
   if(!tr||!p) return;
