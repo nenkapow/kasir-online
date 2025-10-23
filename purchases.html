@@ -3,73 +3,43 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Kasir Warung Alesha - Pembelian</title>
+  <title>Kasir Online - Pembelian</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
-
   <style>
     .cell-sm { width: 120px; }
     .cell-md { width: 180px; }
     .text-muted-mini { font-size:.8rem; }
     .readonly { background:#f8f9fa; }
 
-    /* Biar dropdown tidak ketahan overflow tabel */
-    .table-responsive { overflow: visible !important; }
-    #tblItems td { position: relative; }
-
-    /* --- Picker Produk (default: desktop) --- */
+    /* picker produk */
     .pick { position: relative; }
-    .pick .pick-input { padding-bottom:.35rem; }
-
+    .pick .pick-input{ padding-bottom:.35rem; }
     .pick .list-group{
-      position: absolute;
-      left: 0; right: 0;
-      top: calc(100% + 12px);
-      width: 100%;
-      max-height: 280px;
-      overflow: auto;
-      z-index: 1055;
-      border-radius: .5rem;
-      box-shadow: 0 8px 24px rgba(0,0,0,.12);
-      background: #fff;
+      position:absolute; left:0; right:0; top:calc(100% + 12px);
+      width:100%; max-height:280px; overflow:auto; z-index:1055;
+      border-radius:.5rem; box-shadow:0 8px 24px rgba(0,0,0,.12);
     }
-    .pick .list-group::before{
-      content:"";
-      position:absolute;
-      top:-12px; left:0; right:0; height:12px;
-    }
-    .pick .list-group-item { cursor:pointer; }
-
-    /* --- Mobile: jadikan bottom sheet agar tidak kepotong --- */
-    @media (max-width: 767.98px){
-      .pick .list-group{
-        position: fixed;
-        left: 12px;
-        right: 12px;
-        top: auto;
-        bottom: calc(env(safe-area-inset-bottom, 0) + 16px);
-        width: auto;
-        max-height: 60vh;
-        overflow-y: auto;
-        z-index: 2000;
-        border-radius: .75rem;
-        box-shadow: 0 8px 24px rgba(0,0,0,.2);
-        background: #fff;
-      }
-    }
+    .pick .list-group::before{ content:""; position:absolute; top:-12px; left:0; right:0; height:12px; }
+    .pick .list-group-item{ cursor:pointer; }
   </style>
 </head>
-
 <body class="bg-light">
 <nav class="navbar navbar-dark bg-primary">
   <div class="container-fluid">
     <span class="navbar-brand mb-0 h1">Pembelian / Stok Masuk</span>
-    <a class="btn btn-sm btn-light" href="index.html">Kembali</a>
+    <div class="d-flex gap-2">
+      <button class="btn btn-sm btn-light" id="btnScanTop">📷 Scan</button>
+      <a class="btn btn-sm btn-outline-light" href="index.html">Kembali</a>
+    </div>
   </div>
 </nav>
 
 <main class="container py-4">
   <div class="card shadow-sm">
-    <div class="card-header fw-bold">Input Pembelian</div>
+    <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+      <span>Input Pembelian</span>
+      <button class="btn btn-sm btn-outline-secondary" id="btnScanTop2">📷 Scan</button>
+    </div>
     <div class="card-body">
       <form id="formPembelian" autocomplete="off">
         <div class="row mb-3">
@@ -99,7 +69,10 @@
           </table>
         </div>
 
-        <button type="button" class="btn btn-outline-primary btn-sm" id="btnAdd">+ Tambah Item</button>
+        <div class="d-flex gap-2 mb-2">
+          <button type="button" class="btn btn-outline-primary btn-sm" id="btnAdd">+ Tambah Item</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" id="btnScanRow">📷 Scan ke Baris Aktif</button>
+        </div>
         <hr class="my-3" />
         <div class="d-flex justify-content-between">
           <h5>Total: <span id="totalText">Rp 0</span></h5>
@@ -117,203 +90,340 @@
   </div>
 </main>
 
-<script>
-  const tbody = document.querySelector('#tblItems tbody');
-  const btnAdd = document.getElementById('btnAdd');
-  const totalText = document.getElementById('totalText');
-  const rupiah = n => 'Rp ' + Number(n||0).toLocaleString('id-ID');
-
-  // cache pencarian biar hemat request
-  const productCache = new Map();
-  function searchProducts(q){
-    q = (q||'').trim();
-    if(productCache.has(q)) return Promise.resolve(productCache.get(q));
-    return fetch('api/products.php?q='+encodeURIComponent(q))
-      .then(r=>r.json())
-      .then(j=>{
-        if(!j.ok) throw new Error(j.error||'Gagal ambil produk');
-        productCache.set(q, j.data||[]);
-        return j.data||[];
-      });
-  }
-
-  function makeRow(){
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>
-        <input class="form-control form-control-sm sku readonly" readonly placeholder="SKU">
-      </td>
-      <td>
-        <div class="pick">
-          <input class="form-control form-control-sm pick-input" placeholder="Ketik SKU / Nama, lalu pilih">
-          <div class="list-group d-none pick-list"></div>
+<!-- Modal Scanner -->
+<div class="modal fade" id="scanModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Scan Barcode</h5>
+        <div class="d-flex gap-2">
+          <button class="btn btn-sm btn-outline-secondary" id="toggle-camera">Ganti Kamera</button>
+          <button class="btn btn-sm btn-outline-secondary" id="toggle-torch">Senter</button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
         </div>
-        <div class="text-start text-muted-mini mt-1 name-info"></div>
-      </td>
-      <td>
-        <input type="number" min="1" step="1" class="form-control form-control-sm qty" value="1">
-      </td>
-      <td>
-        <input type="number" min="0" step="1" class="form-control form-control-sm price" value="0">
-      </td>
-      <td class="subtotal text-end">Rp 0</td>
-      <td><button type="button" class="btn btn-danger btn-sm btnDel">&times;</button></td>
-    `;
-    attachRowEvents(tr);
-    return tr;
-  }
+      </div>
+      <div class="modal-body">
+        <div class="ratio ratio-16x9 mb-2">
+          <video id="scanVideo" playsinline muted></video>
+        </div>
+        <div id="scanStatus" class="small text-muted">Menyiapkan kamera…</div>
+      </div>
+    </div>
+  </div>
+</div>
 
-  btnAdd.addEventListener('click', ()=> {
-    tbody.appendChild(makeRow());
-    updateTotal();
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<!-- ZXing -->
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
+
+<script>
+const tbody = document.querySelector('#tblItems tbody');
+const btnAdd = document.getElementById('btnAdd');
+const totalText = document.getElementById('totalText');
+
+const rupiah = n => 'Rp ' + Number(n||0).toLocaleString('id-ID');
+
+// cache pencarian biar hemat request
+const productCache = new Map();
+async function searchProducts(q){
+  const key='q:'+q;
+  if(productCache.has(key)) return productCache.get(key);
+  const res = await fetch('api/products.php?q='+encodeURIComponent(q));
+  const j = await res.json();
+  if(!j.ok) throw new Error(j.error||'Gagal ambil produk');
+  productCache.set(key, j.data||[]);
+  return j.data||[];
+}
+async function getByBarcode(code){
+  // exact by barcode (cepat & akurat)
+  const res = await fetch('api/products.php?barcode='+encodeURIComponent(code));
+  const j = await res.json();
+  if(j.ok && j.data && j.data.length) return j.data[0];
+
+  // fallback: cari via q & cocokan barcode di frontend
+  const rows = await searchProducts(code);
+  return rows.find(r => (r.barcode||'') === code) || null;
+}
+
+function makeRow(){
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input class="form-control form-control-sm sku readonly" readonly placeholder="SKU"></td>
+    <td>
+      <div class="pick">
+        <input class="form-control form-control-sm pick-input" placeholder="Ketik SKU / Nama, lalu pilih">
+        <div class="list-group d-none pick-list"></div>
+      </div>
+      <div class="text-start text-muted-mini mt-1 name-info"></div>
+    </td>
+    <td><input type="number" min="1" step="1" class="form-control form-control-sm qty" value="1"></td>
+    <td><input type="number" min="0" step="1" class="form-control form-control-sm price" value="0"></td>
+    <td class="subtotal text-end">Rp 0</td>
+    <td><button type="button" class="btn btn-danger btn-sm btnDel">&times;</button></td>
+  `;
+  attachRowEvents(tr);
+  return tr;
+}
+
+btnAdd.addEventListener('click', ()=> { tbody.appendChild(makeRow()); updateTotal(); });
+
+// ————— Row logic —————
+let activeRow = null;
+
+function attachRowEvents(tr){
+  const pickInput = tr.querySelector('.pick-input');
+  const pickList  = tr.querySelector('.pick-list');
+  const skuEl     = tr.querySelector('.sku');
+  const nameInfo  = tr.querySelector('.name-info');
+  const qtyEl     = tr.querySelector('.qty');
+  const priceEl   = tr.querySelector('.price');
+
+  pickInput.addEventListener('focus', ()=>{ activeRow = tr; });
+
+  let timer=null;
+  pickInput.addEventListener('input', e=>{
+    const q = e.target.value;
+    clearTimeout(timer);
+    if(!q){ pickList.innerHTML=''; pickList.classList.add('d-none'); return; }
+    timer=setTimeout(async ()=>{
+      try{
+        const rows = await searchProducts(q);
+        if(!rows.length){ pickList.classList.add('d-none'); pickList.innerHTML=''; return; }
+        pickList.innerHTML = rows.map(r=>`
+          <button type="button" class="list-group-item list-group-item-action"
+                  data-sku="${r.sku}" data-name="${r.name}" data-cost="${r.cost_price}" data-sell="${r.sell_price}">
+            <div class="d-flex justify-content-between">
+              <span><strong>${r.sku}</strong> — ${r.name}</span>
+              <small class="text-muted">HJ: ${rupiah(r.sell_price)} • Stok ${r.stock}</small>
+            </div>
+          </button>
+        `).join('');
+        pickList.classList.remove('d-none');
+      }catch(err){ console.warn(err); }
+    }, 250);
   });
 
-  function attachRowEvents(tr){
-    const pickInput = tr.querySelector('.pick-input');
-    const pickList  = tr.querySelector('.pick-list');
-    const skuEl     = tr.querySelector('.sku');
-    const nameInfo  = tr.querySelector('.name-info');
-    const qtyEl     = tr.querySelector('.qty');
-    const priceEl   = tr.querySelector('.price');
+  pickList.addEventListener('click', (e)=>{
+    const it = e.target.closest('button.list-group-item'); if(!it) return;
+    const sku  = it.dataset.sku;
+    const name = it.dataset.name;
+    const cost = Number(it.dataset.cost||0);
+    const sell = Number(it.dataset.sell||0);
 
-    let timer=null;
+    skuEl.value = sku;
+    pickInput.value = name;
+    pickInput.classList.add('readonly'); pickInput.readOnly = true;
 
-    pickInput.addEventListener('input', e=>{
-      const q = e.target.value;
-      clearTimeout(timer);
-      if(!q){ pickList.innerHTML=''; pickList.classList.add('d-none'); return; }
-      timer=setTimeout(async ()=>{
-        try{
-          const rows = await searchProducts(q);
-          if(!rows.length){ pickList.classList.add('d-none'); pickList.innerHTML=''; return; }
-          pickList.innerHTML = rows.map(r=>`
-            <button type="button" class="list-group-item list-group-item-action"
-                    data-sku="${r.sku}" data-name="${r.name}" data-cost="${r.cost_price}" data-sell="${r.sell_price}">
-              <div class="d-flex justify-content-between">
-                <span><strong>${r.sku}</strong> — ${r.name}</span>
-                <small class="text-muted">HJ: ${rupiah(r.sell_price)} • Stok ${r.stock}</small>
-              </div>
-            </button>
-          `).join('');
-          pickList.classList.remove('d-none');
-        }catch(err){ console.warn(err); }
-      }, 250);
-    });
+    priceEl.value = cost; // harga beli default = modal terakhir
+    nameInfo.textContent = `Harga Jual (aktif): ${rupiah(sell)}`;
 
-    // pilih dari list – default harga beli = cost_price terakhir
-    pickList.addEventListener('click', (e)=>{
-      const it = e.target.closest('button.list-group-item');
-      if(!it) return;
-      const sku  = it.dataset.sku;
-      const name = it.dataset.name;
-      const cost = Number(it.dataset.cost||0);
-      const sell = Number(it.dataset.sell||0);
+    pickList.classList.add('d-none'); pickList.innerHTML='';
+    recalcRow(tr); updateTotal(); activeRow = tr;
+  });
 
-      skuEl.value = sku;
-      pickInput.value = name;
-      pickInput.classList.add('readonly');
-      pickInput.readOnly = true;
+  [qtyEl, priceEl].forEach(el=>{
+    el.addEventListener('input', ()=>{ recalcRow(tr); updateTotal(); });
+  });
 
-      priceEl.value = cost; // HARGA BELI pakai MODAL terakhir
-      nameInfo.textContent = `Harga Jual (aktif): ${rupiah(sell)}`;
+  tr.querySelector('.btnDel').addEventListener('click', ()=>{ tr.remove(); updateTotal(); });
 
-      pickList.classList.add('d-none'); pickList.innerHTML='';
-      recalcRow(tr);
-      updateTotal();
-    });
+  document.addEventListener('click', (ev)=>{ if(!tr.contains(ev.target)) pickList.classList.add('d-none'); });
+}
 
-    // qty / price berubah -> subtotal
-    [qtyEl, priceEl].forEach(el=>{
-      el.addEventListener('input', ()=>{
-        recalcRow(tr);
-        updateTotal();
-      });
-    });
+function recalcRow(tr){
+  const qty = Number(tr.querySelector('.qty').value||0);
+  const price = Number(tr.querySelector('.price').value||0);
+  tr.querySelector('.subtotal').textContent = rupiah(qty*price);
+}
 
-    // hapus baris
-    tr.querySelector('.btnDel').addEventListener('click', ()=>{
-      tr.remove();
-      updateTotal();
-    });
-
-    // klik di luar -> tutup dropdown
-    document.addEventListener('click', (ev)=>{
-      if(!tr.contains(ev.target)){
-        pickList.classList.add('d-none');
-      }
-    });
-  }
-
-  function recalcRow(tr){
+function updateTotal(){
+  let total = 0;
+  tbody.querySelectorAll('tr').forEach(tr=>{
     const qty = Number(tr.querySelector('.qty').value||0);
     const price = Number(tr.querySelector('.price').value||0);
-    tr.querySelector('.subtotal').textContent = rupiah(qty*price);
-  }
+    total += qty*price;
+  });
+  totalText.textContent = rupiah(total);
+}
 
-  function updateTotal(){
-    let total = 0;
-    tbody.querySelectorAll('tr').forEach(tr=>{
-      const qty = Number(tr.querySelector('.qty').value||0);
-      const price = Number(tr.querySelector('.price').value||0);
-      total += qty*price;
+// submit
+document.getElementById('formPembelian').addEventListener('submit', async e => {
+  e.preventDefault();
+  const items = [];
+  tbody.querySelectorAll('tr').forEach(tr => {
+    const sku   = tr.querySelector('.sku').value.trim();
+    const name  = tr.querySelector('.pick-input').value.trim();
+    const qty   = Number(tr.querySelector('.qty').value||0);
+    const price = Number(tr.querySelector('.price').value||0);
+    if (sku && qty>0) items.push({ sku, name, qty, price });
+  });
+  if (!items.length) return alert('Tambahkan minimal 1 item dan pilih produk dari daftar.');
+
+  const data = {
+    supplier_name: e.target.supplier_name.value.trim(),
+    note: e.target.note.value.trim(),
+    items
+  };
+
+  try{
+    const res = await fetch('api/purchase_create.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
     });
-    totalText.textContent = rupiah(total);
-  }
+    const json = await res.json();
+    if(!json.ok) throw new Error(json.error||'Gagal simpan');
+    alert('Pembelian tersimpan!');
+    tbody.innerHTML=''; updateTotal();
+    loadRiwayat();
+  }catch(err){ alert('Gagal: '+err.message); }
+});
 
-  // submit
-  document.getElementById('formPembelian').addEventListener('submit', async e => {
-    e.preventDefault();
-    const items = [];
-    tbody.querySelectorAll('tr').forEach(tr => {
-      const sku   = tr.querySelector('.sku').value.trim();
-      const name  = tr.querySelector('.pick-input').value.trim();
-      const qty   = Number(tr.querySelector('.qty').value||0);
-      const price = Number(tr.querySelector('.price').value||0);
-      if (sku && qty>0) items.push({ sku, name, qty, price });
-    });
-    if (!items.length) return alert('Tambahkan minimal 1 item dan pilih produk dari daftar.');
+// riwayat
+async function loadRiwayat(){
+  try{
+    const res = await fetch('api/purchase_list.php');
+    const j = await res.json();
+    const div = document.getElementById('riwayat');
+    if(!j.ok){ div.textContent='Gagal memuat data.'; return; }
+    let html = '<table class="table table-sm table-striped"><thead><tr><th>Invoice</th><th>Supplier</th><th>Total</th><th>Tanggal</th></tr></thead><tbody>';
+    j.data.forEach(r=>{ html += `<tr><td>${r.invoice_code}</td><td>${r.supplier_name||'-'}</td><td>${rupiah(Number(r.total))}</td><td>${r.created_at_wib}</td></tr>`; });
+    html += '</tbody></table>'; div.innerHTML = html;
+  }catch(err){}
+}
+loadRiwayat();
 
-    const data = {
-      supplier_name: e.target.supplier_name.value.trim(),
-      note: e.target.note.value.trim(),
-      items
-    };
+// mulai dengan 1 baris kosong
+btnAdd.click();
 
+// -----------------------------------------------------------
+// SCANNER (re-use style dari kasir, khusus pembelian)
+// -----------------------------------------------------------
+const scanModal   = document.getElementById('scanModal');
+const scanVideo   = document.getElementById('scanVideo');
+const scanStatus  = document.getElementById('scanStatus');
+const toggleCam   = document.getElementById('toggle-camera');
+const toggleTorch = document.getElementById('toggle-torch');
+const btnScanTop  = document.getElementById('btnScanTop');
+const btnScanTop2 = document.getElementById('btnScanTop2');
+const btnScanRow  = document.getElementById('btnScanRow');
+
+let scanModalInst = null;
+let codeReader = null;
+let currentDeviceId = null;
+let torchOn = false;
+let activeStream = null;
+
+function isSecureContextOK(){
+  return (location.protocol === 'https:' || location.hostname === 'localhost') &&
+         !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+}
+async function ensureCameraPermission(){
+  const s = await navigator.mediaDevices.getUserMedia({video:true, audio:false});
+  s.getTracks().forEach(t=>t.stop());
+}
+async function getVideoInputs(){
+  const devs = await navigator.mediaDevices.enumerateDevices();
+  return devs.filter(d=>d.kind==='videoinput');
+}
+
+// buka modal scanner
+[btnScanTop, btnScanTop2, btnScanRow].forEach(b=>{
+  b?.addEventListener('click', async ()=>{
+    // pastikan ada row aktif
+    if(!activeRow){
+      if(!tbody.querySelector('tr')) btnAdd.click();
+      activeRow = tbody.querySelector('tr:last-child');
+    }
+    scanModalInst = bootstrap.Modal.getOrCreateInstance(scanModal);
+    scanModalInst.show();
     try{
-      const res = await fetch('api/purchase_create.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      const json = await res.json();
-      if(!json.ok) throw new Error(json.error||'Gagal simpan');
-      alert('Pembelian tersimpan!');
-      tbody.innerHTML=''; updateTotal();
-      loadRiwayat();
-    }catch(err){
-      alert('Gagal: '+err.message);
+      if(!isSecureContextOK()){ scanStatus.textContent='Kamera butuh HTTPS / localhost.'; return; }
+      scanStatus.textContent='Meminta izin kamera…';
+      await ensureCameraPermission();
+      await startScanner();
+    }catch(err){ scanStatus.textContent='Gagal akses kamera: '+err.message; }
+  });
+});
+
+scanModal.addEventListener('hidden.bs.modal', stopScanner);
+toggleCam.addEventListener('click', switchCamera);
+toggleTorch.addEventListener('click', tryToggleTorch);
+
+async function startScanner(){
+  if(!window.ZXing){ scanStatus.textContent='Library scanner belum termuat.'; return; }
+  codeReader = codeReader || new ZXing.BrowserMultiFormatReader();
+  scanStatus.textContent = 'Menyiapkan kamera…';
+  const devices = await getVideoInputs();
+  if(!devices.length){ scanStatus.textContent='Kamera tidak ditemukan.'; return; }
+  const back = devices.find(d=>/back|rear|belakang/i.test(d.label||'')) || devices[0];
+  currentDeviceId = back.deviceId;
+  await startDecodeFromDevice(currentDeviceId);
+}
+async function startDecodeFromDevice(deviceId){
+  scanStatus.textContent='Membuka kamera…';
+  await stopScanner();
+
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { deviceId: { exact: deviceId }, width:{ideal:1280}, height:{ideal:720}, focusMode:'continuous' },
+    audio: false
+  });
+  activeStream = stream;
+  scanVideo.srcObject = stream;
+  await scanVideo.play();
+  scanStatus.textContent='Memindai…';
+
+  codeReader.decodeFromVideoDevice(deviceId, scanVideo, async (result, err)=>{
+    if(result){
+      const code = String(result.getText()||'').trim();
+      if(!code) return;
+      // terapkan ke baris aktif
+      const p = await getByBarcode(code);
+      if(!p){ scanStatus.textContent='Barcode tidak terdaftar.'; return; }
+      fillRowFromProduct(activeRow, p);
+      scanModalInst?.hide();
     }
   });
-
-  // riwayat
-  async function loadRiwayat(){
-    try{
-      const res = await fetch('api/purchase_list.php');
-      const j = await res.json();
-      const div = document.getElementById('riwayat');
-      if(!j.ok){ div.textContent='Gagal memuat data.'; return; }
-      let html = '<table class="table table-sm table-striped"><thead><tr><th>Invoice</th><th>Supplier</th><th>Total</th><th>Tanggal</th></tr></thead><tbody>';
-      j.data.forEach(r=>{
-        html += `<tr><td>${r.invoice_code}</td><td>${r.supplier_name||'-'}</td><td>${rupiah(Number(r.total))}</td><td>${r.created_at_wib}</td></tr>`;
-      });
-      html += '</tbody></table>';
-      div.innerHTML = html;
-    }catch(err){}
-  }
-  loadRiwayat();
-
-  // mulai dengan 1 baris kosong
-  btnAdd.click();
+}
+function fillRowFromProduct(tr, p){
+  if(!tr||!p) return;
+  const skuEl   = tr.querySelector('.sku');
+  const input   = tr.querySelector('.pick-input');
+  const info    = tr.querySelector('.name-info');
+  const priceEl = tr.querySelector('.price');
+  skuEl.value   = p.sku || '';
+  input.value   = p.name || '';
+  input.classList.add('readonly'); input.readOnly = true;
+  priceEl.value = Number(p.cost_price||0);
+  info.textContent = `Harga Jual (aktif): ${rupiah(Number(p.sell_price||0))}`;
+  recalcRow(tr); updateTotal();
+}
+async function switchCamera(){
+  try{
+    const devs = await getVideoInputs();
+    if(devs.length<2){ scanStatus.textContent='Kamera ganda tidak tersedia.'; return; }
+    const idx = devs.findIndex(d=>d.deviceId===currentDeviceId);
+    currentDeviceId = devs[(idx+1)%devs.length].deviceId;
+    await startDecodeFromDevice(currentDeviceId);
+  }catch(err){ scanStatus.textContent='Gagal ganti kamera: '+err.message; }
+}
+async function tryToggleTorch(){
+  try{
+    const track = activeStream?.getVideoTracks?.()[0]; if(!track) return;
+    const caps = track.getCapabilities?.()||{};
+    if(!caps.torch){ scanStatus.textContent='Senter tidak didukung kamera ini.'; return; }
+    torchOn = !torchOn;
+    await track.applyConstraints({ advanced:[{ torch: torchOn }] });
+    scanStatus.textContent = torchOn ? 'Senter ON' : 'Senter OFF';
+  }catch(err){ scanStatus.textContent='Gagal set senter: '+err.message; }
+}
+async function stopScanner(){
+  try{ codeReader?.reset(); }catch(_){}
+  try{
+    if(activeStream){ activeStream.getTracks().forEach(t=>t.stop()); activeStream=null; }
+  }catch(_){}
+  scanVideo.srcObject=null; scanStatus.textContent='';
+}
 </script>
 </body>
 </html>
