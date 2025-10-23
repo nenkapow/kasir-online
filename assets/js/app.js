@@ -172,6 +172,29 @@ function onSuggestClick(e){
   addById(btn.dataset.id);
 }
 
+// ---------- helpers barcode ----------
+function findProductByBarcode(raw){
+  const code = String(raw||'').trim();
+  if(!code) return null;
+
+  // exact
+  let p = PRODUCTS.find(x => (x.barcode||'') === code);
+  if(p) return p;
+
+  // UPC-A (12) <-> EAN-13 (13 with leading 0)
+  if (/^\d+$/.test(code)) {
+    if (code.length === 12) {
+      p = PRODUCTS.find(x => (x.barcode||'') === ('0'+code));
+      if (p) return p;
+    }
+    if (code.length === 13 && code[0]==='0') {
+      p = PRODUCTS.find(x => (x.barcode||'') === code.slice(1));
+      if (p) return p;
+    }
+  }
+  return null;
+}
+
 // ---------- Cart ops ----------
 function addFromBar(){
   const qRaw = (els.search.value||'').trim();
@@ -179,7 +202,7 @@ function addFromBar(){
   const qty = Math.max(1, parseInt(els.qty.value||'1',10));
   if(!q) return;
 
-  let p = PRODUCTS.find(x => (x.barcode||'').toLowerCase() === q);
+  let p = findProductByBarcode(qRaw);
   if(!p) p = PRODUCTS.find(x => (x.sku||'').toLowerCase() === q);
   if(!p) p = PRODUCTS.find(x => (x.name||'').toLowerCase().includes(q));
   if(!p){ beep(); return; }
@@ -468,14 +491,13 @@ function generateSKU(name){
 // ---------- BARCODE generator (EAN-13) ----------
 function ean13CheckDigit(twelveDigits){
   const ds = String(twelveDigits).padStart(12,'0').slice(0,12).split('').map(d=>+d);
-  const sumOdd  = ds.filter((_,i)=>i%2===0).reduce((a,b)=>a+b,0); // posisi 1,3,5...
-  const sumEven = ds.filter((_,i)=>i%2===1).reduce((a,b)=>a+b,0); // 2,4,6...
+  const sumOdd  = ds.filter((_,i)=>i%2===0).reduce((a,b)=>a+b,0);
+  const sumEven = ds.filter((_,i)=>i%2===1).reduce((a,b)=>a+b,0);
   const total = sumOdd + sumEven*3;
   const cd = (10 - (total % 10)) % 10;
   return String(cd);
 }
 function generateEAN13Base(seed){
-  // ambil angka dari seed, jika kurang tambahkan dari ASCII
   const digits = (seed.replace(/\D/g,'') + Array.from(seed).map(c=>c.charCodeAt(0)%10).join('')).replace(/\D/g,'');
   let base = digits.padEnd(12,'0').slice(0,12);
   if(!/\d{12}/.test(base)) base = String(Date.now()).slice(-12);
@@ -489,7 +511,6 @@ function generateEAN13Unique(seed){
   let code = generateEAN13(seed);
   let guard = 0;
   while (PRODUCTS.some(p => (p.barcode||'') === code) && guard < 20){
-    // tweak 12th digit lalu hitung ulang check digit
     let base = code.slice(0,12);
     const n = (parseInt(base.slice(-3)) + Math.floor(Math.random()*7)+1) % 1000;
     base = base.slice(0,9) + String(n).padStart(3,'0');
@@ -547,33 +568,40 @@ function isSecureContextOK() {
          !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 }
 async function ensureCameraPermission() {
-  try {
-    const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-    tmp.getTracks().forEach(t => t.stop());
-  } catch (err) {
-    throw new Error('Izin kamera ditolak atau tidak tersedia');
-  }
+  const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+  tmp.getTracks().forEach(t => t.stop());
 }
 async function getVideoInputs() {
-  if (!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices)) {
-    if (window.ZXing && ZXing.BrowserVideoReader?.listVideoInputDevices) {
-      return await ZXing.BrowserVideoReader.listVideoInputDevices();
-    }
-    throw new Error('Perangkat tidak mendukung enumerateDevices');
-  }
   const devices = await navigator.mediaDevices.enumerateDevices();
   return devices.filter(d => d.kind === 'videoinput');
 }
 async function startScanner(){
   if(!window.ZXing){ els.scanStatus.textContent = 'Library scanner belum termuat.'; return; }
-  codeReader = codeReader || new ZXing.BrowserMultiFormatReader();
+
+  // Hints untuk akurasi tinggi + dukungan format luas
+  const HINTS = new Map();
+  HINTS.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  HINTS.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+    ZXing.BarcodeFormat.EAN_13,
+    ZXing.BarcodeFormat.EAN_8,
+    ZXing.BarcodeFormat.UPC_A,
+    ZXing.BarcodeFormat.UPC_E,
+    ZXing.BarcodeFormat.CODE_128,
+    ZXing.BarcodeFormat.CODE_39,
+    ZXing.BarcodeFormat.ITF,
+    ZXing.BarcodeFormat.CODABAR,
+    ZXing.BarcodeFormat.QR_CODE
+  ]);
+
+  codeReader = new ZXing.BrowserMultiFormatReader(HINTS);
+  codeReader.timeBetweenDecodingAttempts = 100;
 
   els.scanStatus.textContent = 'Menyiapkan kamera…';
   const devices = await getVideoInputs();
   if(!devices.length){ els.scanStatus.textContent = 'Kamera tidak ditemukan.'; return; }
 
-  const backCam = devices.find(d => /back|rear|belakang/i.test(d.label || ''));
-  currentDeviceId = (backCam || devices[0]).deviceId;
+  const backCam = devices.find(d => /back|rear|belakang/i.test(d.label || '')) || devices[0];
+  currentDeviceId = backCam.deviceId;
 
   await startDecodeFromDevice(currentDeviceId);
 }
@@ -585,20 +613,22 @@ async function startDecodeFromDevice(deviceId){
     video: {
       deviceId: deviceId ? { exact: deviceId } : undefined,
       focusMode: 'continuous',
-      width: { ideal: 1280 },
-      height: { ideal: 720 }
+      width:  { ideal: 1920 },
+      height: { ideal: 1080 },
+      advanced: [{ zoom: 2 }]
     },
     audio: false
   };
 
   const stream = await navigator.mediaDevices.getUserMedia(constraints);
   activeStream = stream;
+  els.scanVideo.setAttribute('playsinline','true');
   els.scanVideo.srcObject = stream;
   await els.scanVideo.play();
 
   els.scanStatus.textContent = 'Memindai…';
 
-  codeReader.decodeFromVideoDevice(deviceId || null, els.scanVideo, (result, err) => {
+  codeReader.decodeFromVideoDevice(deviceId || null, els.scanVideo, (result) => {
     if(result){
       const text = String(result.getText() || '').trim();
       if(text){
@@ -612,6 +642,7 @@ async function startDecodeFromDevice(deviceId){
         }
       }
     }
+    // NotFoundError per frame tanpa kode -> diabaikan
   });
 }
 async function switchCamera(){
@@ -632,9 +663,9 @@ async function toggleTorch(){
     if(!track) return;
     const caps = track.getCapabilities?.() || {};
     if(!caps.torch){ els.scanStatus.textContent = 'Senter tidak didukung kamera ini.'; return; }
-    const on = !track.getConstraints()?.advanced?.some?.(a=>a.torch);
-    await track.applyConstraints({ advanced: [{ torch: on }] });
-    els.scanStatus.textContent = on ? 'Senter ON' : 'Senter OFF';
+    const current = !!track.getConstraints()?.advanced?.find?.(a=>a.torch);
+    await track.applyConstraints({ advanced: [{ torch: !current }] });
+    els.scanStatus.textContent = !current ? 'Senter ON' : 'Senter OFF';
   }catch(err){
     els.scanStatus.textContent = 'Gagal set senter: ' + err.message;
   }
