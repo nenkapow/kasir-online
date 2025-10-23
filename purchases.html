@@ -16,7 +16,7 @@
     .pick .pick-input{ padding-bottom:.35rem; }
     .pick .list-group{
       position:absolute; left:0; right:0; top:calc(100% + 12px);
-      width:100%; max-height:280px; overflow:auto; z-index:1055;
+      width:100%; max-height:320px; overflow:auto; z-index:1055;
       border-radius:.5rem; box-shadow:0 8px 24px rgba(0,0,0,.12);
     }
     .pick .list-group::before{ content:""; position:absolute; top:-12px; left:0; right:0; height:12px; }
@@ -58,7 +58,7 @@
             <thead class="table-light">
               <tr>
                 <th class="cell-sm">SKU</th>
-                <th>Nama Produk <small class="text-muted">(HJ aktif ditampilkan di bawah)</small></th>
+                <th>Nama Produk <small class="text-muted">(HJ aktif di bawah)</small></th>
                 <th class="cell-sm">Qty</th>
                 <th class="cell-md">Harga (Beli)</th>
                 <th class="cell-md">Subtotal</th>
@@ -103,8 +103,8 @@
         </div>
       </div>
       <div class="modal-body">
-        <div class="ratio ratio-16x9 mb-2 bg-dark">
-          <video id="scanVideo" playsinline muted style="width:100%;height:100%;object-fit:cover"></video>
+        <div class="ratio ratio-16x9 mb-2 bg-dark rounded">
+          <video id="scanVideo" playsinline muted></video>
         </div>
         <div id="scanStatus" class="small text-muted">Menyiapkan kamera…</div>
       </div>
@@ -117,13 +117,12 @@
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
 
 <script>
+/* ======= Helpers ======= */
 const tbody = document.querySelector('#tblItems tbody');
 const btnAdd = document.getElementById('btnAdd');
 const totalText = document.getElementById('totalText');
-
 const rupiah = n => 'Rp ' + Number(n||0).toLocaleString('id-ID');
 
-// cache pencarian biar hemat request
 const productCache = new Map();
 async function searchProducts(q){
   const key='q:'+q;
@@ -135,41 +134,36 @@ async function searchProducts(q){
   return j.data||[];
 }
 
-// cari by barcode (dengan fallback UPC/EAN)
+// Ambil produk by barcode (robust untuk EAN-13/UPC-A leading zero)
 async function getByBarcode(raw) {
   let code = String(raw || '').trim();
   if (!code) return null;
 
-  async function fetchExact(c) {
-    const res = await fetch('api/products.php?barcode=' + encodeURIComponent(c));
-    const j = await res.json();
-    if (j.ok && Array.isArray(j.data) && j.data.length) return j.data[0];
-    return null;
-  }
-
-  let p = await fetchExact(code);
-  if (p) return p;
-
-  if (code.length === 12 && /^\d{12}$/.test(code)) {
-    p = await fetchExact('0' + code); // UPC-A → EAN-13
-    if (p) return p;
-  }
-  if (code.length === 13 && code[0] === '0' && /^\d{13}$/.test(code)) {
-    p = await fetchExact(code.slice(1)); // EAN-13(leading 0) → UPC-A
-    if (p) return p;
-  }
-
+  // fallback via searchProducts lalu cocokkan di FE (karena endpoint generik)
   try {
     const rows = await searchProducts(code);
-    p = rows.find(r => String(r.barcode||'').trim() === code)
-      || rows.find(r => String(r.barcode||'').trim() === ('0'+code))
-      || rows.find(r => String(r.barcode||'').trim() === code.slice(1));
+    let p = rows.find(r => String(r.barcode||'').trim() === code);
     if (p) return p;
-  } catch (_) {}
 
-  return null;
+    // Jika 12 digit (UPC-A), coba EAN-13 dgn 0 di depan
+    if (/^\d{12}$/.test(code)) {
+      p = rows.find(r => String(r.barcode||'').trim() === ('0'+code));
+      if (p) return p;
+    }
+
+    // Jika 13 digit & leading 0, coba versi 12 digit (buang 0)
+    if (/^\d{13}$/.test(code) && code[0]==='0') {
+      p = rows.find(r => String(r.barcode||'').trim() === code.slice(1));
+      if (p) return p;
+    }
+
+    return null;
+  } catch(_) {
+    return null;
+  }
 }
 
+/* ======= UI Rows ======= */
 function makeRow(){
   const tr = document.createElement('tr');
   tr.innerHTML = `
@@ -192,7 +186,7 @@ function makeRow(){
 
 btnAdd.addEventListener('click', ()=> { tbody.appendChild(makeRow()); updateTotal(); });
 
-// ————— Row logic —————
+// — Active row utk scan —
 let activeRow = null;
 
 function attachRowEvents(tr){
@@ -271,7 +265,7 @@ function updateTotal(){
   totalText.textContent = rupiah(total);
 }
 
-// submit
+/* ======= Submit ======= */
 document.getElementById('formPembelian').addEventListener('submit', async e => {
   e.preventDefault();
   const items = [];
@@ -304,7 +298,7 @@ document.getElementById('formPembelian').addEventListener('submit', async e => {
   }catch(err){ alert('Gagal: '+err.message); }
 });
 
-// riwayat
+/* ======= Riwayat ======= */
 async function loadRiwayat(){
   try{
     const res = await fetch('api/purchase_list.php');
@@ -321,7 +315,7 @@ loadRiwayat();
 // mulai dengan 1 baris kosong
 btnAdd.click();
 
-/* ====================== SCANNER ====================== */
+/* ======= Scanner (kamera belakang HD) ======= */
 const scanModal   = document.getElementById('scanModal');
 const scanVideo   = document.getElementById('scanVideo');
 const scanStatus  = document.getElementById('scanStatus');
@@ -334,7 +328,6 @@ const btnScanRow  = document.getElementById('btnScanRow');
 let scanModalInst = null;
 let codeReader = null;
 let currentDeviceId = null;
-let torchOn = false;
 let activeStream = null;
 
 function isSecureContextOK(){
@@ -350,6 +343,7 @@ async function getVideoInputs(){
   return devs.filter(d=>d.kind==='videoinput');
 }
 
+// buka modal scanner (pastikan ada baris aktif)
 [btnScanTop, btnScanTop2, btnScanRow].forEach(b=>{
   b?.addEventListener('click', async ()=>{
     if(!activeRow){
@@ -373,28 +367,11 @@ toggleTorch.addEventListener('click', tryToggleTorch);
 
 async function startScanner(){
   if(!window.ZXing){ scanStatus.textContent='Library scanner belum termuat.'; return; }
-
-  // >>> HINTS: dukung banyak format & lebih agresif
-  const HINTS = new Map();
-  HINTS.set(ZXing.DecodeHintType.TRY_HARDER, true);
-  HINTS.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-    ZXing.BarcodeFormat.EAN_13,
-    ZXing.BarcodeFormat.EAN_8,
-    ZXing.BarcodeFormat.UPC_A,
-    ZXing.BarcodeFormat.UPC_E,
-    ZXing.BarcodeFormat.CODE_128,
-    ZXing.BarcodeFormat.CODE_39,
-    ZXing.BarcodeFormat.ITF,
-    ZXing.BarcodeFormat.CODABAR,
-    ZXing.BarcodeFormat.QR_CODE
-  ]);
-
-  codeReader = new ZXing.BrowserMultiFormatReader(HINTS);
-  codeReader.timeBetweenDecodingAttempts = 100;
-
+  codeReader = codeReader || new ZXing.BrowserMultiFormatReader();
   scanStatus.textContent = 'Menyiapkan kamera…';
   const devices = await getVideoInputs();
   if(!devices.length){ scanStatus.textContent='Kamera tidak ditemukan.'; return; }
+  // pilih kamera belakang terlebih dulu
   const back = devices.find(d=>/back|rear|belakang/i.test(d.label||'')) || devices[0];
   currentDeviceId = back.deviceId;
   await startDecodeFromDevice(currentDeviceId);
@@ -404,30 +381,24 @@ async function startDecodeFromDevice(deviceId){
   scanStatus.textContent='Membuka kamera…';
   await stopScanner();
 
-  const constraints = {
+  const stream = await navigator.mediaDevices.getUserMedia({
     video: {
       deviceId: deviceId ? { exact: deviceId } : undefined,
-      focusMode: 'continuous',
-      width:  { ideal: 1920 },
-      height: { ideal: 1080 },
-      advanced: [{ zoom: 2 }]
+      width:{ideal:1280}, height:{ideal:720},
+      focusMode:'continuous'
     },
     audio: false
-  };
-
-  const stream = await navigator.mediaDevices.getUserMedia(constraints);
+  });
   activeStream = stream;
-  scanVideo.setAttribute('playsinline', 'true');
   scanVideo.srcObject = stream;
   await scanVideo.play();
-
   scanStatus.textContent='Memindai…';
 
   codeReader.decodeFromVideoDevice(deviceId || null, scanVideo, async (result, err) => {
     if (result) {
       const code = String(result.getText() || '').trim();
       if (!code) return;
-      scanStatus.textContent = 'Terbaca: ' + code + ' — mencari produk…';
+      scanStatus.textContent = 'Terbaca: ' + code + ' — mencari…';
 
       if (!activeRow) {
         if (!tbody.querySelector('tr')) btnAdd.click();
@@ -435,17 +406,14 @@ async function startDecodeFromDevice(deviceId){
       }
 
       const p = await getByBarcode(code);
-      if (!p) {
-        scanStatus.textContent = 'Kode ' + code + ' belum terdaftar. (Coba simpan barcode di Kelola Produk)';
-        return;
-      }
+      if (!p) { scanStatus.textContent = 'Kode '+code+' belum terdaftar.'; return; }
 
       try { codeReader.reset(); } catch(_) {}
       fillRowFromProduct(activeRow, p);
       scanStatus.textContent = 'OK: ' + (p.name || p.sku);
       setTimeout(() => scanModalInst?.hide(), 200);
     }
-    // NotFoundError: abaikan
+    // NotFoundError per frame diabaikan
   });
 }
 
@@ -455,10 +423,12 @@ function fillRowFromProduct(tr, p){
   const input   = tr.querySelector('.pick-input');
   const info    = tr.querySelector('.name-info');
   const priceEl = tr.querySelector('.price');
+
   skuEl.value   = p.sku || '';
   input.value   = p.name || '';
   input.classList.add('readonly'); input.readOnly = true;
-  priceEl.value = Number(p.cost_price||0);
+
+  priceEl.value = Number(p.cost_price||0); // harga beli default = modal terakhir
   info.textContent = `Harga Jual (aktif): ${rupiah(Number(p.sell_price||0))}`;
   recalcRow(tr); updateTotal();
 }
@@ -472,22 +442,20 @@ async function switchCamera(){
     await startDecodeFromDevice(currentDeviceId);
   }catch(err){ scanStatus.textContent='Gagal ganti kamera: '+err.message; }
 }
-
 async function tryToggleTorch(){
   try{
     const track = activeStream?.getVideoTracks?.()[0]; if(!track) return;
     const caps = track.getCapabilities?.()||{};
     if(!caps.torch){ scanStatus.textContent='Senter tidak didukung kamera ini.'; return; }
-    torchOn = !torchOn;
-    await track.applyConstraints({ advanced:[{ torch: torchOn }] });
-    scanStatus.textContent = torchOn ? 'Senter ON' : 'Senter OFF';
+    const cur = track.getConstraints()?.advanced?.find?.(a=>a.torch)?.torch || false;
+    await track.applyConstraints({ advanced:[{ torch: !cur }] });
+    scanStatus.textContent = (!cur) ? 'Senter ON' : 'Senter OFF';
   }catch(err){ scanStatus.textContent='Gagal set senter: '+err.message; }
 }
-
 async function stopScanner(){
   try{ codeReader?.reset(); }catch(_){}
   try{
-    if(activeStream){ activeStream.getTracks().forEach(t=>t.stop()); activeStream=null; }
+    if(activeStream){ activeStream.getTracks().forEach(t => t.stop()); activeStream=null; }
   }catch(_){}
   scanVideo.srcObject=null; scanStatus.textContent='';
 }
