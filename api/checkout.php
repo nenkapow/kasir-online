@@ -1,114 +1,60 @@
 <?php
-require __DIR__ . '/_init.php';
-require_auth();
-
-header('Content-Type: application/json; charset=utf-8');
-
-/**
- * Baca input: dukung JSON (application/json) dan form-url-encoded.
- */
-$ct  = $_SERVER['CONTENT_TYPE'] ?? '';
-$raw = file_get_contents('php://input');
-
-if (stripos($ct, 'application/json') !== false) {
-  $in = json_decode($raw, true);
-  if (!is_array($in)) $in = [];
-} else {
-  // x-www-form-urlencoded / multipart
-  $in = $_POST;
-  if (isset($in['items']) && is_string($in['items'])) {
-    $try = json_decode($in['items'], true);
-    if (is_array($try)) $in['items'] = $try;
-  }
-}
-
-// --- DEBUG ke log (aman untuk tracing; hapus kalau tidak perlu) ---
-error_log('checkout CT=' . $ct);
-error_log('checkout raw=' . substr($raw ?? '', 0, 500));
-error_log('checkout items count=' . (is_array($in['items'] ?? null) ? count($in['items']) : 0));
-
-$method     = $in['method']       ?? 'cash';
-$note       = trim((string)($in['note'] ?? ''));
-$items      = $in['items']        ?? [];
-$amountPaid = (int)($in['amount_paid'] ?? 0);
-
-if (!is_array($items) || count($items) === 0) {
-  http_response_code(400);
-  echo json_encode(['ok'=>false, 'error'=>'Item kosong']);
-  exit;
-}
+require_once __DIR__ . '/_init.php';
 
 try {
-  $pdo = db();
+  // Ambil FormData
+  $method = trim($_POST['method'] ?? 'cash');
+  $note   = trim($_POST['note'] ?? '');
+  $total  = (float)($_POST['total'] ?? 0);
+  $paid   = (float)($_POST['amount_paid'] ?? 0);
+
+  $itemsJson = $_POST['items'] ?? '[]';
+  $items = json_decode($itemsJson, true);
+  if (!is_array($items) || !count($items)) throw new Exception('Items kosong.');
+
+  if ($total < 0) $total = 0.0;
+  if ($paid  < 0) $paid  = 0.0;
+  $change = max(0, $paid - $total);
+
+  $inv = 'TRX-'.gmdate('Ymd-His');
+
   $pdo->beginTransaction();
 
-  // Hitung total & cek stok (lock row)
-  $total = 0;
-  $sel   = $pdo->prepare("SELECT id, name, stock FROM products WHERE id=:id FOR UPDATE");
-  foreach ($items as $it) {
-    // frontend boleh kirim "id" atau "product_id"
-    $pid   = (int)($it['product_id'] ?? $it['id'] ?? 0);
-    $qty   = (int)($it['qty']   ?? 0);
-    $price = (int)($it['price'] ?? 0);
+  // header penjualan
+  $st = $pdo->prepare("INSERT INTO sales (invoice_code, method, note, total, amount_paid, change_amount, created_at)
+                       VALUES (?,?,?,?,?,?,UTC_TIMESTAMP())");
+  $st->execute([$inv, $method, $note, $total, $paid, $change]);
+  $sid = (int)$pdo->lastInsertId();
 
-    if ($pid <= 0 || $qty <= 0 || $price < 0) {
-      throw new Exception('Data item tidak valid');
-    }
-
-    $sel->execute([':id'=>$pid]);
-    $row = $sel->fetch();
-    if (!$row)                     throw new Exception('Produk tidak ditemukan');
-    if ((int)$row['stock'] < $qty) throw new Exception("Stok tidak cukup untuk {$row['name']}");
-
-    $total += $qty * $price;
-  }
-
-  if ($amountPaid < $total) {
-    throw new Exception('Nominal bayar kurang dari total');
-  }
-  $change = $amountPaid - $total;
-
-  // Simpan sales
-  $insSale = $pdo->prepare(
-    "INSERT INTO sales (total, method, amount_paid, change_amount, note, created_at)
-     VALUES (:t, :m, :ap, :ch, :n, NOW())"
-  );
-  $insSale->execute([
-    ':t'=>$total, ':m'=>$method, ':ap'=>$amountPaid, ':ch'=>$change, ':n'=>$note
-  ]);
-  $sale_id = (int)$pdo->lastInsertId();
-
-  // Simpan item + kurangi stok
-  $insItem  = $pdo->prepare(
-    "INSERT INTO sale_items (sale_id, product_id, qty, price, subtotal)
-     VALUES (:sid, :pid, :q, :p, :s)"
-  );
-  $updStock = $pdo->prepare("UPDATE products SET stock = stock - :q WHERE id=:pid");
+  $itStmt = $pdo->prepare("INSERT INTO sale_items (sale_id, product_id, qty, price, subtotal) VALUES (?,?,?,?,?)");
+  $getP   = $pdo->prepare("SELECT stock FROM products WHERE id=? FOR UPDATE");
+  $updP   = $pdo->prepare("UPDATE products SET stock=?, updated_at=UTC_TIMESTAMP() WHERE id=?");
 
   foreach ($items as $it) {
-    $pid   = (int)($it['product_id'] ?? $it['id']);
-    $qty   = (int)$it['qty'];
-    $price = (int)$it['price'];
+    $pid = (int)($it['product_id'] ?? $it['id'] ?? 0);
+    $qty = max(1, (int)($it['qty'] ?? 0));
+    $prc = max(0, (float)($it['price'] ?? 0));
+    $sub = $qty * $prc;
 
-    $insItem->execute([
-      ':sid'=>$sale_id, ':pid'=>$pid, ':q'=>$qty, ':p'=>$price, ':s'=>$qty*$price
-    ]);
-    $updStock->execute([':q'=>$qty, ':pid'=>$pid]);
+    if ($pid <= 0) throw new Exception('Produk tidak valid.');
+
+    // lock + cek stok
+    $getP->execute([$pid]);
+    $row = $getP->fetch();
+    if (!$row) throw new Exception("Produk ID $pid tidak ditemukan.");
+    $stok = (int)$row['stock'];
+    if ($stok < $qty) throw new Exception('Stok tidak cukup');
+
+    // kurangi stok
+    $updP->execute([$stok - $qty, $pid]);
+
+    // detail
+    $itStmt->execute([$sid, $pid, $qty, $prc, $sub]);
   }
 
   $pdo->commit();
-
-  echo json_encode([
-    'ok'   => true,
-    'data' => [
-      'sale_id'     => $sale_id,
-      'total'       => $total,
-      'amount_paid' => $amountPaid,
-      'change'      => $change
-    ]
-  ]);
+  json(['ok' => true, 'invoice_code' => $inv, 'change' => $change]);
 } catch (Throwable $e) {
-  if (isset($pdo) && $pdo->inTransaction()) $pdo->rollBack();
-  http_response_code(400);
-  echo json_encode(['ok'=>false, 'error'=>$e->getMessage()]);
+  if ($pdo?->inTransaction()) $pdo->rollBack();
+  json(['ok' => false, 'error' => $e->getMessage()], 400);
 }
