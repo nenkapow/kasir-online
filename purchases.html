@@ -11,12 +11,16 @@
     .text-muted-mini { font-size:.8rem; }
     .readonly { background:#f8f9fa; }
 
+    /* inti fix: jangan potong dropdown di dalam table */
+    .table-responsive{ overflow: visible !important; }
+
     /* picker produk */
     .pick { position: relative; }
     .pick .pick-input{ padding-bottom:.35rem; }
     .pick .list-group{
       position:absolute; left:0; right:0; top:calc(100% + 12px);
-      width:100%; max-height:320px; overflow:auto; z-index:1055;
+      width:100%; max-height:320px; overflow:auto;
+      z-index:2000; /* di atas card/header */
       border-radius:.5rem; box-shadow:0 8px 24px rgba(0,0,0,.12);
     }
     .pick .list-group::before{ content:""; position:absolute; top:-12px; left:0; right:0; height:12px; }
@@ -113,7 +117,6 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<!-- ZXing -->
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
 
 <script>
@@ -138,29 +141,20 @@ async function searchProducts(q){
 async function getByBarcode(raw) {
   let code = String(raw || '').trim();
   if (!code) return null;
-
-  // fallback via searchProducts lalu cocokkan di FE (karena endpoint generik)
   try {
     const rows = await searchProducts(code);
     let p = rows.find(r => String(r.barcode||'').trim() === code);
     if (p) return p;
-
-    // Jika 12 digit (UPC-A), coba EAN-13 dgn 0 di depan
-    if (/^\d{12}$/.test(code)) {
+    if (/^\d{12}$/.test(code)) { // UPC-A → coba EAN-13 (prepend 0)
       p = rows.find(r => String(r.barcode||'').trim() === ('0'+code));
       if (p) return p;
     }
-
-    // Jika 13 digit & leading 0, coba versi 12 digit (buang 0)
-    if (/^\d{13}$/.test(code) && code[0]==='0') {
+    if (/^\d{13}$/.test(code) && code[0]==='0') { // EAN-13 leading 0 → coba 12
       p = rows.find(r => String(r.barcode||'').trim() === code.slice(1));
       if (p) return p;
     }
-
     return null;
-  } catch(_) {
-    return null;
-  }
+  } catch(_) { return null; }
 }
 
 /* ======= UI Rows ======= */
@@ -186,7 +180,6 @@ function makeRow(){
 
 btnAdd.addEventListener('click', ()=> { tbody.appendChild(makeRow()); updateTotal(); });
 
-// — Active row utk scan —
 let activeRow = null;
 
 function attachRowEvents(tr){
@@ -343,7 +336,6 @@ async function getVideoInputs(){
   return devs.filter(d=>d.kind==='videoinput');
 }
 
-// buka modal scanner (pastikan ada baris aktif)
 [btnScanTop, btnScanTop2, btnScanRow].forEach(b=>{
   b?.addEventListener('click', async ()=>{
     if(!activeRow){
@@ -371,7 +363,6 @@ async function startScanner(){
   scanStatus.textContent = 'Menyiapkan kamera…';
   const devices = await getVideoInputs();
   if(!devices.length){ scanStatus.textContent='Kamera tidak ditemukan.'; return; }
-  // pilih kamera belakang terlebih dulu
   const back = devices.find(d=>/back|rear|belakang/i.test(d.label||'')) || devices[0];
   currentDeviceId = back.deviceId;
   await startDecodeFromDevice(currentDeviceId);
@@ -382,11 +373,7 @@ async function startDecodeFromDevice(deviceId){
   await stopScanner();
 
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: {
-      deviceId: deviceId ? { exact: deviceId } : undefined,
-      width:{ideal:1280}, height:{ideal:720},
-      focusMode:'continuous'
-    },
+    video: { deviceId: deviceId ? { exact: deviceId } : undefined, width:{ideal:1280}, height:{ideal:720}, focusMode:'continuous' },
     audio: false
   });
   activeStream = stream;
@@ -413,7 +400,6 @@ async function startDecodeFromDevice(deviceId){
       scanStatus.textContent = 'OK: ' + (p.name || p.sku);
       setTimeout(() => scanModalInst?.hide(), 200);
     }
-    // NotFoundError per frame diabaikan
   });
 }
 
@@ -428,7 +414,7 @@ function fillRowFromProduct(tr, p){
   input.value   = p.name || '';
   input.classList.add('readonly'); input.readOnly = true;
 
-  priceEl.value = Number(p.cost_price||0); // harga beli default = modal terakhir
+  priceEl.value = Number(p.cost_price||0);
   info.textContent = `Harga Jual (aktif): ${rupiah(Number(p.sell_price||0))}`;
   recalcRow(tr); updateTotal();
 }
