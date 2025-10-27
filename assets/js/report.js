@@ -1,113 +1,158 @@
-// ===================== REPORT.JS (versi cocok dengan report.html kamu) =====================
+// ====== Report Page (summary + top products) ======
 
 const $ = (q) => document.querySelector(q);
-const rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+const els = {
+  start: $('#start'),
+  end: $('#end'),
+  btnLoad: $('#btn-load') || $('#btn_load') || $('#btnLoad'),
+  btnCsv: $('#btn-csv') || $('#btn_csv') || $('#btnCsv'),
+  sumBody: $('#summary-body'),
+  topBody: $('#top-body'),
+};
 
-window.addEventListener('DOMContentLoaded', () => {
-  const els = {
-    start: $('#start'),
-    end: $('#end'),
-    btnLoad: $('#btn-load'),
-    btnCsv: $('#btn-csv'),
-    sumBody: $('#summary-body'),
-    topBody: $('#top-body'),
-  };
+const todayStr = () => {
+  const d = new Date();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${m}-${day}`;
+};
 
-  const today = new Date();
-  const toDateInput = (d) =>
-    new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-      .toISOString()
-      .slice(0, 10);
+const rupiah = (n) =>
+  'Rp ' + Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
 
-  els.start.value = els.start.value || toDateInput(today);
-  els.end.value = els.end.value || toDateInput(today);
+function setLoading(on) {
+  if (els.btnLoad) els.btnLoad.disabled = on;
+  if (els.btnCsv) els.btnCsv.disabled = on;
+}
 
-  els.btnLoad.addEventListener('click', loadReport);
-  els.btnCsv.addEventListener('click', exportCSV);
+async function fetchReport(start, end) {
+  const url = `/api/report.php?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+  const res = await fetch(url, { cache: 'no-store' });
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); }
+  catch { throw new Error(text || 'Respon bukan JSON'); }
+  if (!data.ok) throw new Error(data.error || 'Gagal memuat laporan');
+  return data;
+}
 
-  async function loadReport() {
-    const start = els.start.value;
-    const end = els.end.value;
-    els.sumBody.innerHTML = `<tr><td colspan="3" class="text-center text-muted">Memuat...</td></tr>`;
-    els.topBody.innerHTML = `<tr><td colspan="3" class="text-center text-muted">Memuat...</td></tr>`;
+function renderSummary(rows) {
+  const tb = els.sumBody;
+  tb.innerHTML = '';
+  if (!rows || !rows.length) {
+    tb.innerHTML = `<tr><td colspan="3" class="text-center text-muted">Tidak ada data</td></tr>`;
+    return;
+  }
+  const html = rows.map(r => `
+    <tr>
+      <td>${r.date}</td>
+      <td>${r.count}</td>
+      <td class="text-end">${rupiah(r.total)}</td>
+    </tr>
+  `).join('');
+  tb.innerHTML = html;
+}
 
-    try {
-      const [sales, products] = await Promise.all([
-        fetch(`/api/report_sales.php?start=${start}&end=${end}`).then((r) => r.json()).catch(() => ({ ok: false })),
-        fetch(`/api/report_top_products.php?start=${start}&end=${end}`).then((r) => r.json()).catch(() => ({ ok: false })),
-      ]);
+function renderTop(rows) {
+  const tb = els.topBody;
+  tb.innerHTML = '';
+  if (!rows || !rows.length) {
+    tb.innerHTML = `<tr><td colspan="3" class="text-center text-muted">Tidak ada data</td></tr>`;
+    return;
+  }
+  const html = rows.map(r => `
+    <tr>
+      <td>${r.name}</td>
+      <td>${r.qty}</td>
+      <td class="text-end">${rupiah(r.revenue)}</td>
+    </tr>
+  `).join('');
+  tb.innerHTML = html;
+}
 
-      renderSummary(sales.ok ? sales.data || [] : []);
-      renderTop(products.ok ? products.data || [] : []);
-    } catch (e) {
-      els.sumBody.innerHTML = `<tr><td colspan="3" class="text-danger text-center">Gagal memuat data.</td></tr>`;
-      els.topBody.innerHTML = `<tr><td colspan="3" class="text-danger text-center">Gagal memuat data.</td></tr>`;
-    }
+async function loadNow() {
+  const start = (els.start?.value || '').trim();
+  const end = (els.end?.value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    alert('Tanggal harus format YYYY-MM-DD'); return;
+  }
+  try {
+    setLoading(true);
+    const data = await fetchReport(start, end);
+    renderSummary(data.summary || []);
+    renderTop((data.top_products || []).map(p => ({
+      name: p.name, qty: Number(p.qty||0), revenue: Number(p.revenue||0)
+    })));
+  } catch (e) {
+    console.warn(e);
+    alert(e.message || 'Gagal memuat laporan');
+  } finally {
+    setLoading(false);
+  }
+}
+
+function exportCSV() {
+  // kumpulkan data dari tabel yang sudah dirender
+  const parseNum = (s) => Number(String(s).replace(/[^\d\-]/g, '')) || 0;
+
+  // Summary
+  const sumRows = [...els.sumBody.querySelectorAll('tr')].map(tr => {
+    const tds = tr.querySelectorAll('td');
+    if (tds.length !== 3) return null;
+    const date = tds[0].textContent.trim();
+    const count = tds[1].textContent.trim();
+    const total = parseNum(tds[2].textContent);
+    return { date, count, total };
+  }).filter(Boolean);
+
+  // Top products
+  const topRows = [...els.topBody.querySelectorAll('tr')].map(tr => {
+    const tds = tr.querySelectorAll('td');
+    if (tds.length !== 3) return null;
+    const name = tds[0].textContent.trim();
+    const qty = tds[1].textContent.trim();
+    const revenue = parseNum(tds[2].textContent);
+    return { name, qty, revenue };
+  }).filter(Boolean);
+
+  let csv = [];
+  csv.push('Ringkasan Harian');
+  csv.push('Tanggal,Transaksi,Omzet (Rp)');
+  if (sumRows.length) {
+    sumRows.forEach(r => csv.push([r.date, r.count, r.total].join(',')));
+  } else {
+    csv.push('Tidak ada data,,');
+  }
+  csv.push('');
+  csv.push('Produk Terlaris');
+  csv.push('Produk,Qty,Penjualan (Rp)');
+  if (topRows.length) {
+    topRows.forEach(r => csv.push([`"${r.name.replace(/"/g,'""')}"`, r.qty, r.revenue].join(',')));
+  } else {
+    csv.push('Tidak ada data,,');
   }
 
-  function renderSummary(rows) {
-    if (!rows.length) {
-      els.sumBody.innerHTML = `<tr><td colspan="3" class="text-center text-muted">Tidak ada data</td></tr>`;
-      return;
-    }
-    els.sumBody.innerHTML = rows
-      .map(
-        (r) => `
-      <tr>
-        <td>${r.date || '-'}</td>
-        <td>${r.transactions || 0}</td>
-        <td class="text-end">${rupiah(r.total || 0)}</td>
-      </tr>`
-      )
-      .join('');
-  }
+  const blob = new Blob([csv.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  const start = (els.start?.value || todayStr());
+  const end = (els.end?.value || todayStr());
+  a.href = URL.createObjectURL(blob);
+  a.download = `laporan-penjualan_${start}_to_${end}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
 
-  function renderTop(rows) {
-    if (!rows.length) {
-      els.topBody.innerHTML = `<tr><td colspan="3" class="text-center text-muted">Tidak ada data</td></tr>`;
-      return;
-    }
-    els.topBody.innerHTML = rows
-      .map(
-        (r) => `
-      <tr>
-        <td>${r.product_name || '-'}</td>
-        <td>${r.qty || 0}</td>
-        <td class="text-end">${rupiah(r.total || 0)}</td>
-      </tr>`
-      )
-      .join('');
-  }
+document.addEventListener('DOMContentLoaded', () => {
+  // default ke hari ini
+  const today = todayStr();
+  if (els.start && !els.start.value) els.start.value = today;
+  if (els.end && !els.end.value) els.end.value = today;
 
-  async function exportCSV() {
-    const start = els.start.value;
-    const end = els.end.value;
+  els.btnLoad?.addEventListener('click', loadNow);
+  els.btnCsv?.addEventListener('click', exportCSV);
 
-    try {
-      const res = await fetch(`/api/report_sales.php?start=${start}&end=${end}`);
-      const j = await res.json();
-      if (!j.ok) throw new Error(j.error || 'Gagal mengambil data');
-
-      const rows = j.data || [];
-      if (!rows.length) return alert('Tidak ada data untuk diexport');
-
-      const header = ['Tanggal', 'Transaksi', 'Omzet (Rp)'];
-      const csv =
-        header.join(',') +
-        '\n' +
-        rows.map((r) => [r.date, r.transactions, r.total].join(',')).join('\n');
-
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = `laporan_${start}_sd_${end}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-    } catch (e) {
-      alert('Gagal export CSV: ' + e.message);
-    }
-  }
-
-  loadReport();
+  // auto load pertama kali
+  loadNow();
 });
