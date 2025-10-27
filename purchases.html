@@ -6,15 +6,19 @@
   <title>Kasir Online - Pembelian</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
   <style>
+    /* --- FIX utama: biar dropdown tidak terpotong kontainer scroll --- */
+    .table-responsive{ overflow: visible !important; }          /* override Bootstrap */
+    /* --- Gaya umum --- */
     .cell-sm { width: 120px; }
     .cell-md { width: 160px; }
     .text-muted-mini { font-size:.8rem; }
     .readonly { background:#f8f9fa; }
-    .pick { position: relative; }
+    /* picker produk */
+    .pick { position: relative; }                               /* anchor absolute list */
     .pick .pick-input{ padding-bottom:.35rem; }
     .pick .list-group{
       position:absolute; left:0; right:0; top:calc(100% + 12px);
-      width:100%; max-height:320px; overflow:auto; z-index:1055;
+      width:100%; max-height:320px; overflow:auto; z-index:2000;  /* tinggi, di atas table & modal-body */
       border-radius:.5rem; box-shadow:0 8px 24px rgba(0,0,0,.12);
     }
     .pick .list-group::before{ content:""; position:absolute; top:-12px; left:0; right:0; height:12px; }
@@ -26,25 +30,12 @@
   <div class="container-fluid">
     <span class="navbar-brand mb-0 h1">Pembelian / Stok Masuk</span>
     <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-light" href="purchase-report.html">Laporan Pembelian</a>
       <button class="btn btn-sm btn-light" id="btnScanTop">📷 Scan</button>
       <a class="btn btn-sm btn-outline-light" href="index.html">Kembali</a>
     </div>
   </div>
 </nav>
-
-/* biar dropdown tidak kepotong oleh table wrapper */
-.table-responsive{ overflow: visible !important; }
-
-/* pastikan dropdown selalu di atas */
-.pick{ position: relative; }
-.pick .list-group{
-  position: absolute;
-  left: 0; right: 0;
-  top: calc(100% + 12px);
-  max-height: 320px;
-  overflow: auto;
-  z-index: 2000;   /* lebih tinggi dari card/modal */
-}
 
 <main class="container py-4">
   <div class="card shadow-sm">
@@ -235,7 +226,7 @@ function attachRowEvents(tr){
     pickInput.value = name;
     pickInput.classList.add('readonly'); pickInput.readOnly = true;
 
-    priceEl.value = cost; // harga beli default = modal terakhir
+    priceEl.value = cost;                                /* harga beli default = modal terakhir */
     if (sellEl.value === '0' || sellEl.value === '' ) sellEl.value = Math.max(sell, 0);
     nameInfo.textContent = `Harga Jual (aktif): ${rupiah(sell)}`;
 
@@ -344,8 +335,9 @@ async function getVideoInputs(){
       if(!tbody.querySelector('tr')) btnAdd.click();
       activeRow = tbody.querySelector('tr:last-child');
     }
-    scanModalInst = bootstrap.Modal.getOrCreateInstance(scanModal);
-    scanModalInst.show();
+    const modal = bootstrap.Modal.getOrCreateInstance(scanModal);
+    modal.show();
+    scanModalInst = modal;
     try{
       if(!isSecureContextOK()){ scanStatus.textContent='Kamera butuh HTTPS / localhost.'; return; }
       scanStatus.textContent='Meminta izin kamera…';
@@ -443,14 +435,3 @@ async function stopScanner(){
 </script>
 </body>
 </html>
-
-<nav class="navbar navbar-dark bg-primary">
-  <div class="container-fluid">
-    <span class="navbar-brand mb-0 h1">Pembelian / Stok Masuk</span>
-    <div class="d-flex gap-2">
-      <a class="btn btn-sm btn-light" href="purchase-report.html">Laporan Pembelian</a>
-      <button class="btn btn-sm btn-light" id="btnScanTop">📷 Scan</button>
-      <a class="btn btn-sm btn-outline-light" href="index.html">Kembali</a>
-    </div>
-  </div>
-</nav>
